@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OmniraAI — Campaign Tracker</title>
+<title>OmniraAI — Campaign Builder</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#05080f;color:#cfe0f5;}
@@ -11,6 +11,8 @@ input,select,textarea,button{font-family:inherit;}
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:#1a3055;border-radius:3px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 </style>
 </head>
 <body>
@@ -25,6 +27,9 @@ const html=htm.bind(React.createElement);
 const SB_URL='https://vchtdsfrryxnvceierkn.supabase.co';
 const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZjaHRkc2Zycnl4bnZjZWllcmtuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0ODcyMTYsImV4cCI6MjA5NDA2MzIxNn0.VuPuPqCbVYlxNpeTulkKK-IMezzxg3C05c4kWn3evqo';
 const SBH={'apikey':SB_KEY,'Authorization':`Bearer ${SB_KEY}`,'Content-Type':'application/json'};
+// Campaign Orchestrator — the single pipeline trigger
+const ORCHESTRATOR_URL='https://n8n-y8wq-production.up.railway.app/webhook/campaign-orchestrator';
+
 const db={
   async getSetting(k){try{const r=await fetch(`${SB_URL}/rest/v1/settings?key=eq.${k}&select=value`,{headers:SBH});const d=await r.json();return d[0]?.value||null;}catch{return null;}},
   async setSetting(k,v){try{await fetch(`${SB_URL}/rest/v1/settings`,{method:'POST',headers:{...SBH,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify({key:k,value:v,updated_at:new Date().toISOString()})});}catch(e){console.error(e);}},
@@ -38,26 +43,73 @@ const C={bg:'#05080f',s1:'#0a1020',s2:'#0e1830',s3:'#13213e',s4:'#071526',bd:'#1
 const inp=(ex={})=>({background:C.s2,border:`0.5px solid ${C.bd}`,borderRadius:6,color:C.tx,padding:'8px 11px',fontSize:13,width:'100%',outline:'none',...ex});
 const pbtn=(on,ex={})=>({background:on?C.ac:'transparent',color:on?'#fff':C.tx,border:on?'none':`0.5px solid ${C.bd}`,borderRadius:6,padding:'7px 14px',fontSize:13,cursor:'pointer',...ex});
 
-const GOALS=['Lead generation','Brand awareness','Product launch','Sales / conversion','Retargeting','Retention & loyalty','Event promotion','Seasonal campaign','UGC / testimonial','Educational content'];
-const PLATFORMS=['Instagram Feed','Instagram Reels','Instagram Stories','TikTok','Facebook Feed','Facebook Reels','Shopee','Lazada','WhatsApp Broadcast','Email','LinkedIn','YouTube Shorts'];
-const CONTENT_TYPES=['Short-form video (15–30s)','Short-form video (30–60s)','Long-form video (60s+)','Static image – single','Static image – carousel','Story / vertical format','Email newsletter','WhatsApp message','Ad copy only','Caption + hashtags only'];
-const TONES_OVR=['Use brand voice (default)','More urgent','More playful','More premium','More educational','More emotional','More direct'];
-const STATUSES={requested:{l:'Requested',c:C.dm,bg:'#27446620'},generating:{l:'Generating',c:C.wn,bg:'#fbbf2415'},review:{l:'Ready Review',c:C.pu,bg:'#a78bfa15'},approved:{l:'Approved',c:C.tl,bg:'#2dd4bf15'},revision:{l:'Needs Revision',c:C.or,bg:'#fb923c15'},published:{l:'Published',c:C.ok,bg:'#34d39915'},cancelled:{l:'Cancelled',c:C.er,bg:'#f8717115'}};
-const ASSET_TYPES=['Video','Static image','Caption','Ad copy','Email','WhatsApp message','Voiceover','Other'];
+const GOALS=['Lead generation','Brand awareness','Product launch','Sales / conversion','Website traffic','Retargeting','Retention & loyalty','Event promotion','Seasonal campaign','Educational content'];
+const KPI_TYPES=['New leads','New customers / sales','Website sessions','Email open rate','Social engagement rate','App installs','Cost per lead (CPL)','Return on ad spend (ROAS)'];
+const PLATFORMS=[
+  {g:'Social',items:['Instagram Feed','Instagram Reels','Instagram Stories','TikTok','Facebook Feed','Facebook Reels','YouTube Shorts','LinkedIn']},
+  {g:'Messaging',items:['WhatsApp Broadcast','Email']},
+  {g:'Commerce',items:['Shopee','Lazada']},
+  {g:'Search & SEO',items:['Google Search Ads','Google Display Ads','SEO / Organic Search']},
+];
+const ALL_PLATFORMS=PLATFORMS.flatMap(g=>g.items);
+const CONTENT_TYPES=['Short-form video (15–30s)','Short-form video (30–60s)','Long-form video (60s+)','Static image – single','Static image – carousel','Story / vertical format','Email newsletter','WhatsApp message','Ad copy only','Caption + hashtags only','Blog / SEO article','Google Ad copy'];
+const STATUSES={draft:{l:'Draft',c:C.mt,bg:'#27446615'},requested:{l:'Requested',c:C.dm,bg:'#27446620'},generating:{l:'Generating',c:C.wn,bg:'#fbbf2415'},review:{l:'Ready Review',c:C.pu,bg:'#a78bfa15'},approved:{l:'Approved',c:C.tl,bg:'#2dd4bf15'},revision:{l:'Needs Revision',c:C.or,bg:'#fb923c15'},published:{l:'Published',c:C.ok,bg:'#34d39915'},cancelled:{l:'Cancelled',c:C.er,bg:'#f8717115'}};
 const uid=()=>Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4);
 const fmtd=d=>d?new Date(d).toLocaleDateString('en-MY',{day:'numeric',month:'short',year:'numeric'}):'—';
 const fmtdt=d=>d?new Date(d).toLocaleString('en-MY',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
-const blankReq=()=>({id:uid(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),status:'requested',clientId:'',clientName:'',brandName:'',campaignName:'',goal:'',platforms:[],contentTypes:[],productOffer:'',keyMessage:'',toneOverride:'Use brand voice (default)',targetAudience:'',deadline:'',numVariants:3,additionalNotes:'',urgency:'normal',webhookSentAt:null,webhookStatus:null,assets:[],activityLog:[]});
-const blankAsset=()=>({id:uid(),type:'',name:'',status:'requested',url:'',notes:'',createdAt:new Date().toISOString()});
+const now=()=>new Date().toISOString();
 
-function Chips({opts=[],selected=[],onToggle}){return html`<div style=${{display:'flex',flexWrap:'wrap',gap:6}}>${opts.map(o=>{const k=typeof o==='object'?o.k:o,l=typeof o==='object'?o.v:o,on=selected.includes(k);return html`<button key=${k} onClick=${()=>onToggle(k)} style=${{background:on?C.ac:C.s3,color:on?'#fff':C.dm,border:`0.5px solid ${on?C.ac:C.bd}`,borderRadius:20,padding:'4px 12px',fontSize:12,cursor:'pointer'}}>${l}</button>`;})}</div>`;}
+const blankReq=()=>({
+  id:uid(),createdAt:now(),updatedAt:now(),status:'draft',
+  clientId:'',clientName:'',brandName:'',
+  campaignName:'',goal:'',
+  startDate:'',deadline:'',
+  platforms:[],contentTypes:[],
+  productOffer:'',keyMessage:'',additionalNotes:'',
+  landingPageUrl:'',
+  kpiType:'',kpiTarget:'',kpiBudgetMYR:'',
+  numVariants:2,urgency:'normal',
+  webhookSentAt:null,webhookStatus:null,
+  assets:[],activityLog:[]
+});
+
+function Chips({opts=[],selected=[],onToggle}){
+  return html`<div style=${{display:'flex',flexWrap:'wrap',gap:5}}>
+    ${opts.map(o=>{const on=selected.includes(o);return html`<button key=${o} onClick=${()=>onToggle(o)}
+      style=${{background:on?C.ac:C.s3,color:on?'#fff':C.dm,border:`0.5px solid ${on?C.ac:C.bd}`,borderRadius:20,padding:'4px 11px',fontSize:12,cursor:'pointer'}}>${o}</button>`;})}</div>`;
+}
 function Lb({children}){return html`<div style=${{fontSize:11,color:C.dm,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:5}}>${children}</div>`;}
-function Fd({label,span2,req,children}){return html`<div style=${{gridColumn:span2?'span 2':'span 1'}}><div style=${{fontSize:11,color:C.dm,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:5,display:'flex',gap:4}}>${label}${req&&html`<span style=${{color:C.er}}>*</span>`}</div>${children}</div>`;}
-function Hint({children}){return html`<div style=${{fontSize:11,color:C.mt,marginTop:4,lineHeight:1.5}}>${children}</div>`;}
-function SBadge({status,size='sm'}){const s=STATUSES[status]||STATUSES.requested;return html`<span style=${{background:s.bg,color:s.c,border:`0.5px solid ${s.c}50`,borderRadius:20,padding:size==='lg'?'4px 14px':'2px 10px',fontSize:size==='lg'?12:11,fontWeight:500,whiteSpace:'nowrap'}}>${s.l}</span>`;}
+function Fd({label,span2,req,hint,children}){return html`<div style=${{gridColumn:span2?'span 2':'span 1'}}>
+  <div style=${{fontSize:11,color:C.dm,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:5,display:'flex',gap:4,alignItems:'center'}}>${label}${req&&html`<span style=${{color:C.er}}>*</span>`}</div>
+  ${children}
+  ${hint&&html`<div style=${{fontSize:11,color:C.mt,marginTop:4,lineHeight:1.5}}>${hint}</div>`}
+</div>`;}
+function SBadge({status}){const s=STATUSES[status]||STATUSES.draft;return html`<span style=${{background:s.bg,color:s.c,border:`0.5px solid ${s.c}50`,borderRadius:20,padding:'3px 11px',fontSize:11,fontWeight:500,whiteSpace:'nowrap'}}>${s.l}</span>`;}
 function Card({style={},children}){return html`<div style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:10,...style}}>${children}</div>`;}
-function Sec({t,children,action}){return html`<div style=${{marginBottom:22}}><div style=${{fontSize:11,color:C.ac,textTransform:'uppercase',letterSpacing:'1px',marginBottom:12,paddingBottom:7,borderBottom:`0.5px solid ${C.bd}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span>${t}</span>${action||''}</div>${children}</div>`;}
-function Spinner(){return html`<div style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:10,padding:'40px',color:C.dm,fontSize:13}}><div style=${{width:18,height:18,border:`2px solid ${C.bd}`,borderTop:`2px solid ${C.ac}`,borderRadius:'50%',animation:'spin 0.8s linear infinite'}}></div>Loading from Supabase…</div>`;}
+function Sec({t,sub,children,action}){return html`<div style=${{marginBottom:20}}>
+  <div style=${{fontSize:11,color:C.ac,textTransform:'uppercase',letterSpacing:'1px',marginBottom:3,paddingBottom:7,borderBottom:`0.5px solid ${C.bd}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span>${t}</span>${action||''}</div>
+  ${sub&&html`<div style=${{fontSize:12,color:C.mt,marginBottom:10,lineHeight:1.5}}>${sub}</div>`}
+  ${children}
+</div>`;}
+function Spinner(){return html`<div style=${{display:'flex',alignItems:'center',justifyContent:'center',gap:10,padding:'40px',color:C.dm,fontSize:13}}><div style=${{width:18,height:18,border:`2px solid ${C.bd}`,borderTop:`2px solid ${C.ac}`,borderRadius:'50%',animation:'spin 0.8s linear infinite'}}></div>Loading…</div>`;}
+
+function AudienceContext({client}){
+  if(!client)return null;
+  const a=client.audience||{};const m=client.messaging||{};const p=client.platforms||{};
+  const lines=[
+    a.description&&`Audience: ${a.description}`,
+    a.ageRanges?.length&&`Age: ${a.ageRanges.join(', ')}`,
+    a.gender&&`Gender: ${a.gender}`,
+    m.usp&&`USP: ${m.usp}`,
+    m.cta&&`CTA: ${m.cta}`,
+    p.active?.length&&`Active platforms: ${p.active.join(', ')}`,
+  ].filter(Boolean);
+  if(!lines.length)return null;
+  return html`<div style=${{background:`${C.ok}08`,border:`0.5px solid ${C.ok}30`,borderRadius:8,padding:'10px 14px',marginTop:10,animation:'fadeIn 0.2s ease'}}>
+    <div style=${{fontSize:10,color:C.ok,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:6}}>✓ From Brand Manager (App 1)</div>
+    ${lines.map((l,i)=>html`<div key=${i} style=${{fontSize:12,color:C.dm,marginBottom:3,lineHeight:1.5}}>${l}</div>`)}
+  </div>`;
+}
 
 function App(){
   const[locked,setLocked]=useState(true);
@@ -65,7 +117,6 @@ function App(){
   const[clients,setClients]=useState([]);
   const[campaigns,setCampaigns]=useState([]);
   const[loading,setLoading]=useState(true);
-  const[webhookUrl,setWebhookUrl]=useState('');
   const[view,setView]=useState('tracker');
   const[form,setForm]=useState(null);
   const[det,setDet]=useState(null);
@@ -79,17 +130,12 @@ function App(){
   useEffect(()=>{(async()=>{
     const p=await db.getSetting('pin');
     if(p)setSavedPin(p);else setPmode('create');
-    const wh=await db.getSetting('webhook_url');
-    if(wh)setWebhookUrl(wh);
-    const cl=await db.getClients();
-    setClients(cl);
-    const ca=await db.getCampaigns();
-    setCampaigns(ca);
+    const cl=await db.getClients();setClients(cl);
+    const ca=await db.getCampaigns();setCampaigns(ca);
     setLoading(false);
   })();},[]);
 
   const showToast=(msg,type='ok')=>{setToast(msg);setToastType(type);setTimeout(()=>setToast(''),3500);};
-
   function doPin(){
     if(pmode==='create'){if(pin.length<4){setPErr('Min 4 chars');return;}if(pin!==pin2){setPErr('PINs do not match');return;}db.setSetting('pin',pin);setSavedPin(pin);setLocked(false);}
     else{if(pin===savedPin){setLocked(false);setPErr('');}else{setPErr('Incorrect PIN');setPin('');}}
@@ -98,7 +144,6 @@ function App(){
   const startNew=()=>{setForm(blankReq());setView('new');};
   const openDet=c=>{setDet(c);setView('detail');};
   const goBack=()=>{setView('tracker');setForm(null);setDet(null);};
-
   const sf=(f,v)=>setForm(p=>({...p,[f]:v}));
   const togArr=(f,v)=>setForm(p=>({...p,[f]:(p[f]||[]).includes(v)?(p[f]||[]).filter(x=>x!==v):[...(p[f]||[]),v]}));
 
@@ -107,60 +152,77 @@ function App(){
     if(!c){sf('clientId','');sf('clientName','');sf('brandName','');return;}
     sf('clientId',id);sf('clientName',c.basics.clientName);sf('brandName',c.basics.brandName||c.basics.clientName);
   }
+  const getClient=()=>clients.find(c=>c.id===form?.clientId);
 
-  async function submitRequest(){
+  async function submitRequest(asDraft=false){
     if(!form.clientId){showToast('Please select a client','er');return;}
     if(!form.campaignName){showToast('Please enter a campaign name','er');return;}
-    if(!form.goal){showToast('Please select a campaign goal','er');return;}
-    if(form.platforms.length===0){showToast('Please select at least one platform','er');return;}
-    if(form.contentTypes.length===0){showToast('Please select at least one content type','er');return;}
-    if(!webhookUrl){showToast('No n8n webhook URL — go to Settings first','er');return;}
+    if(!asDraft){
+      if(!form.goal){showToast('Please select a campaign goal','er');return;}
+      if(form.platforms.length===0){showToast('Please select at least one platform','er');return;}
+      if(form.contentTypes.length===0){showToast('Please select at least one content type','er');return;}
+    }
     setSubmitting(true);
-    const client=clients.find(c=>c.id===form.clientId);
-    const payload={event:'content_request',request_id:form.id,submitted_at:new Date().toISOString(),campaign:{id:form.id,name:form.campaignName,goal:form.goal,platforms:form.platforms,content_types:form.contentTypes,product_offer:form.productOffer,key_message:form.keyMessage,tone_override:form.toneOverride,target_audience_notes:form.targetAudience,deadline:form.deadline,num_variants:form.numVariants,urgency:form.urgency,additional_notes:form.additionalNotes},client_brief:client||null};
-    let webhookStatus='pending';let log=[{time:new Date().toISOString(),msg:'Campaign request submitted',type:'info'}];
-    try{
-      const res=await fetch(webhookUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      if(res.ok){webhookStatus='sent';log.push({time:new Date().toISOString(),msg:`Webhook delivered (HTTP ${res.status})`,type:'ok'});showToast('Request sent to n8n ✓','ok');}
-      else{webhookStatus='failed';log.push({time:new Date().toISOString(),msg:`Webhook failed: HTTP ${res.status}`,type:'er'});showToast(`Webhook failed (HTTP ${res.status})`,'er');}
-    }catch(e){webhookStatus='failed';log.push({time:new Date().toISOString(),msg:`Webhook error: ${e.message}`,type:'er'});showToast('Could not reach n8n','er');}
-    const saved={...form,webhookSentAt:new Date().toISOString(),webhookStatus,activityLog:log,updatedAt:new Date().toISOString()};
+    const client=getClient();
+    // Add UTM base for this campaign
+    const utmBase=`utm_campaign=${encodeURIComponent(form.campaignName)}&utm_source={channel}&utm_medium={format}&utm_content={asset_id}`;
+    const saved={...form,updatedAt:now(),utmBase,status:asDraft?'draft':'requested'};
+
+    if(!asDraft){
+      // Send to Campaign Orchestrator — triggers copy + media generation
+      const payload={
+        event:'campaign_brief',
+        campaign_id:form.id,
+        campaign:{
+          id:form.id,name:form.campaignName,goal:form.goal,
+          start_date:form.startDate,deadline:form.deadline,
+          platforms:form.platforms,content_types:form.contentTypes,
+          product_offer:form.productOffer,key_message:form.keyMessage,
+          additional_notes:form.additionalNotes,
+          landing_page_url:form.landingPageUrl,
+          kpi_type:form.kpiType,kpi_target:form.kpiTarget,
+          kpi_budget_myr:form.kpiBudgetMYR,
+          num_variants:form.numVariants,urgency:form.urgency,
+          utm_base:utmBase
+        },
+        client_brief:client||null
+      };
+      let log=[{time:now(),msg:'Campaign brief submitted',type:'info'}];
+      try{
+        const res=await fetch(ORCHESTRATOR_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        if(res.ok){
+          log.push({time:now(),msg:`Orchestrator triggered (HTTP ${res.status}) — generating copy + media`,type:'ok'});
+          showToast('Campaign submitted — generating content ✓','ok');
+          saved.webhookSentAt=now();saved.webhookStatus='sent';saved.status='generating';
+        }else{
+          log.push({time:now(),msg:`Orchestrator failed: HTTP ${res.status}`,type:'er'});
+          showToast(`Submit failed (HTTP ${res.status})`,'er');
+          saved.webhookStatus='failed';
+        }
+      }catch(e){
+        log.push({time:now(),msg:`Error: ${e.message}`,type:'er'});
+        showToast('Could not reach n8n','er');
+        saved.webhookStatus='failed';
+      }
+      saved.activityLog=log;
+    }else{
+      showToast('Saved as draft ✓','ok');
+      saved.activityLog=[{time:now(),msg:'Saved as draft',type:'info'}];
+    }
+
     await db.upsertCampaign(saved);
-    const ca=await db.getCampaigns();
-    setCampaigns(ca);
+    const ca=await db.getCampaigns();setCampaigns(ca);
     setSubmitting(false);setView('tracker');setForm(null);
   }
 
   async function updateStatus(id,status){
     const c=campaigns.find(x=>x.id===id);if(!c)return;
-    const log=[...(c.activityLog||[]),{time:new Date().toISOString(),msg:`Status → ${STATUSES[status]?.l||status}`,type:'info'}];
-    const updated={...c,status,updatedAt:new Date().toISOString(),activityLog:log};
+    const log=[...(c.activityLog||[]),{time:now(),msg:`Status → ${STATUSES[status]?.l||status}`,type:'info'}];
+    const updated={...c,status,updatedAt:now(),activityLog:log};
     await db.upsertCampaign(updated);
     const ca=await db.getCampaigns();setCampaigns(ca);
     if(det?.id===id)setDet(ca.find(x=>x.id===id));
-    showToast(`Status updated to ${STATUSES[status]?.l}`,'ok');
-  }
-
-  async function addAsset(cid){
-    const c=campaigns.find(x=>x.id===cid);if(!c)return;
-    const updated={...c,assets:[...(c.assets||[]),blankAsset()],updatedAt:new Date().toISOString()};
-    await db.upsertCampaign(updated);
-    const ca=await db.getCampaigns();setCampaigns(ca);if(det?.id===cid)setDet(ca.find(x=>x.id===cid));
-  }
-
-  async function updateAsset(cid,aid,field,value){
-    const c=campaigns.find(x=>x.id===cid);if(!c)return;
-    const assets=(c.assets||[]).map(a=>a.id===aid?{...a,[field]:value}:a);
-    const updated={...c,assets,updatedAt:new Date().toISOString()};
-    await db.upsertCampaign(updated);
-    const ca=await db.getCampaigns();setCampaigns(ca);if(det?.id===cid)setDet(ca.find(x=>x.id===cid));
-  }
-
-  async function removeAsset(cid,aid){
-    const c=campaigns.find(x=>x.id===cid);if(!c)return;
-    const updated={...c,assets:(c.assets||[]).filter(a=>a.id!==aid),updatedAt:new Date().toISOString()};
-    await db.upsertCampaign(updated);
-    const ca=await db.getCampaigns();setCampaigns(ca);if(det?.id===cid)setDet(ca.find(x=>x.id===cid));
+    showToast(`Status → ${STATUSES[status]?.l}`,'ok');
   }
 
   async function deleteCampaign(id){
@@ -169,39 +231,25 @@ function App(){
     const ca=await db.getCampaigns();setCampaigns(ca);goBack();
   }
 
-  async function saveWebhook(){await db.setSetting('webhook_url',webhookUrl);showToast('Webhook URL saved ✓','ok');}
-
-  async function retriggerWebhook(campaign){
-    if(!webhookUrl){showToast('No webhook URL','er');return;}
-    const client=clients.find(c=>c.id===campaign.clientId);
-    const payload={event:'content_request_retry',request_id:campaign.id,submitted_at:new Date().toISOString(),campaign,client_brief:client||null};
-    try{
-      const res=await fetch(webhookUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      const log=[...(campaign.activityLog||[]),{time:new Date().toISOString(),msg:`Re-triggered (HTTP ${res.status})`,type:res.ok?'ok':'er'}];
-      const updated={...campaign,webhookSentAt:new Date().toISOString(),webhookStatus:res.ok?'sent':'failed',activityLog:log};
-      await db.upsertCampaign(updated);
-      const ca=await db.getCampaigns();setCampaigns(ca);if(det?.id===campaign.id)setDet(ca.find(x=>x.id===campaign.id));
-      showToast(res.ok?'Re-triggered n8n ✓':'Webhook failed','ok');
-    }catch(e){showToast('Could not reach n8n','er');}
-  }
-
   async function exportAll(){const b=new Blob([JSON.stringify(campaigns,null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='omniraai-campaigns.json';a.click();URL.revokeObjectURL(u);}
 
   const G={display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px 20px'};
-  const filtered=campaigns.filter(c=>{const n=(c.campaignName||'').toLowerCase()+(c.brandName||'').toLowerCase();return(filterStatus==='all'||c.status===filterStatus)&&(filterClient==='all'||c.clientId===filterClient)&&(!srch||n.includes(srch.toLowerCase()));});
-  const stats={total:campaigns.length,active:campaigns.filter(c=>['generating','review','approved'].includes(c.status)).length,review:campaigns.filter(c=>c.status==='review').length,published:campaigns.filter(c=>c.status==='published').length};
+  const filtered=campaigns.filter(c=>{
+    const n=(c.campaignName||'').toLowerCase()+(c.brandName||'').toLowerCase();
+    return(filterStatus==='all'||c.status===filterStatus)&&(filterClient==='all'||c.clientId===filterClient)&&(!srch||n.includes(srch.toLowerCase()));
+  });
+  const stats={total:campaigns.length,generating:campaigns.filter(c=>c.status==='generating').length,review:campaigns.filter(c=>c.status==='review').length,published:campaigns.filter(c=>c.status==='published').length};
 
   if(locked)return html`
     <div style=${{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:24}}>
       <div style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:14,padding:40,width:'100%',maxWidth:360,textAlign:'center'}}>
         <div style=${{width:60,height:60,borderRadius:16,background:`linear-gradient(135deg,${C.ac},${C.pu})`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 20px',fontSize:22,fontWeight:700,color:'#fff'}}>O</div>
         <div style=${{fontSize:24,fontWeight:700,color:C.tx}}>OmniraAI</div>
-        <div style=${{fontSize:13,color:C.dm,margin:'4px 0 28px'}}>Campaign Tracker${pmode==='create'?' — Create PIN':''}</div>
+        <div style=${{fontSize:13,color:C.dm,margin:'4px 0 28px'}}>Campaign Builder${pmode==='create'?' — Create PIN':''}</div>
         <input style=${inp({marginBottom:10,textAlign:'center',letterSpacing:6,fontSize:20})} type="password" placeholder=${pmode==='create'?'Create PIN (min 4)':'Enter PIN'} value=${pin} onChange=${e=>setPin(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&(pmode==='check'?doPin():null)} autoFocus/>
         ${pmode==='create'&&html`<input style=${inp({marginBottom:14,textAlign:'center',letterSpacing:6,fontSize:20})} type="password" placeholder="Confirm PIN" value=${pin2} onChange=${e=>setPin2(e.target.value)} onKeyDown=${e=>e.key==='Enter'&&doPin()}/>`}
         ${pErr&&html`<div style=${{color:C.er,fontSize:12,marginBottom:12}}>${pErr}</div>`}
         <button style=${pbtn(true,{width:'100%',padding:'11px 0',fontSize:15})} onClick=${doPin}>${pmode==='create'?'Create PIN & Enter →':'Unlock →'}</button>
-        <div style=${{fontSize:11,color:C.mt,marginTop:16}}>OmniraAI · Powered by Supabase</div>
       </div>
     </div>`;
 
@@ -210,137 +258,192 @@ function App(){
       <div style=${{display:'flex',alignItems:'center',gap:10}}>
         <div style=${{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.ac},${C.pu})`,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,color:'#fff',fontSize:14}}>O</div>
         <span style=${{fontSize:15,fontWeight:600,color:C.tx}}>OmniraAI</span>
-        <span style=${{fontSize:12,color:C.mt}}>/ Campaign Tracker</span>
-        ${view==='new'&&html`<span style=${{fontSize:12,color:C.mt}}>/ New Request</span>`}
+        <span style=${{fontSize:12,color:C.mt}}>/ Campaign Builder</span>
+        ${view==='new'&&html`<span style=${{fontSize:12,color:C.mt}}>/ New Campaign</span>`}
         ${view==='detail'&&det&&html`<span style=${{fontSize:12,color:C.mt}}>/ ${det.campaignName}</span>`}
-        ${view==='settings'&&html`<span style=${{fontSize:12,color:C.mt}}>/ Settings</span>`}
       </div>
       <div style=${{display:'flex',gap:7,alignItems:'center'}}>
         ${view!=='tracker'&&html`<button onClick=${goBack} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>← Back</button>`}
         ${view==='tracker'&&html`
-          <button onClick=${()=>setView('settings')} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>⚙ Settings</button>
-          <button onClick=${exportAll} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>↓ Backup</button>
-          <button onClick=${startNew} style=${pbtn(true,{fontSize:12,padding:'5px 16px',fontWeight:500})}>+ New Request</button>`}
-        ${view==='new'&&html`<button onClick=${goBack} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>Cancel</button><button onClick=${submitRequest} disabled=${submitting} style=${pbtn(true,{fontSize:12,padding:'6px 18px',fontWeight:500})}>${submitting?'Sending…':'🚀 Submit & Trigger n8n'}</button>`}
-        ${view==='detail'&&det&&html`<button onClick=${()=>retriggerWebhook(det)} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>↺ Re-trigger</button><button onClick=${()=>deleteCampaign(det.id)} style=${pbtn(false,{fontSize:12,padding:'5px 12px',color:C.er,border:`0.5px solid ${C.er}50`})}>Delete</button>`}
+          <button onClick=${exportAll} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>↓ Export</button>
+          <button onClick=${startNew} style=${pbtn(true,{fontSize:12,padding:'5px 16px',fontWeight:500})}>+ New Campaign</button>`}
+        ${view==='new'&&html`
+          <button onClick=${()=>submitRequest(true)} disabled=${submitting} style=${pbtn(false,{fontSize:12,padding:'6px 14px'})}>Save Draft</button>
+          <button onClick=${()=>submitRequest(false)} disabled=${submitting} style=${pbtn(true,{fontSize:12,padding:'6px 18px',fontWeight:500})}>${submitting?'Generating…':'🚀 Submit & Generate'}</button>`}
+        ${view==='detail'&&det&&html`<button onClick=${()=>deleteCampaign(det.id)} style=${pbtn(false,{fontSize:12,padding:'5px 12px',color:C.er,border:`0.5px solid ${C.er}50`})}>Delete</button>`}
       </div>
     </div>`;
 
-  const settingsView=html`
-    <div style=${{maxWidth:680,margin:'0 auto',padding:'32px 24px'}}>
-      <div style=${{fontSize:19,fontWeight:600,color:C.tx,marginBottom:28}}>Settings</div>
-      <${Card} style=${{padding:24,marginBottom:14}}>
-        <${Sec} t="n8n Webhook URL">
-          <input style=${inp({marginBottom:12})} value=${webhookUrl} onChange=${e=>setWebhookUrl(e.target.value)} placeholder="https://your-n8n.up.railway.app/webhook/content-request"/>
-          <div style=${{display:'flex',gap:8}}>
-            <button onClick=${saveWebhook} style=${pbtn(true,{fontSize:13,padding:'8px 20px'})}>Save URL</button>
-            ${webhookUrl&&html`<button onClick=${async()=>{try{const r=await fetch(webhookUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event:'test_ping',sent_at:new Date().toISOString()})});showToast(r.ok?`n8n responded ✓ (HTTP ${r.status})`:`HTTP ${r.status}`,r.ok?'ok':'er');}catch{showToast('Could not reach n8n','er');}}} style=${pbtn(false,{fontSize:13,padding:'8px 16px'})}>Test Ping</button>`}
-          </div>
-        </${Sec}>
-        <${Sec} t="App 1 connection">
-          <div style=${{padding:'11px 14px',background:C.s2,borderRadius:8,border:`0.5px solid ${clients.length>0?C.ok:C.wn}50`,display:'flex',alignItems:'center',gap:10}}>
-            <div style=${{width:8,height:8,borderRadius:'50%',background:clients.length>0?C.ok:C.wn}}></div>
-            <span style=${{fontSize:13,color:clients.length>0?C.ok:C.wn}}>${clients.length>0?`✓ ${clients.length} client brief${clients.length>1?'s':''} loaded from Supabase`:'No clients — add in Brand Manager (App 1) first'}</span>
-          </div>
-        </${Sec}>
-      </${Card}>
-    </div>`;
-
   const newForm=form&&html`
-    <div style=${{maxWidth:860,margin:'0 auto',padding:'24px'}}>
-      <div style=${{marginBottom:20}}><div style=${{fontSize:19,fontWeight:600,color:C.tx}}>New Content Request</div><div style=${{fontSize:13,color:C.dm,marginTop:2}}>Fill in the brief → Submit → n8n generates your content.</div></div>
-      ${!webhookUrl&&html`<div style=${{background:'#fbbf2412',border:`1px solid ${C.wn}50`,borderRadius:8,padding:'12px 16px',marginBottom:18,fontSize:13,color:C.wn}}>⚠️ No webhook URL set. <button onClick=${()=>setView('settings')} style=${{background:'none',border:'none',color:C.ac,cursor:'pointer',fontSize:13,textDecoration:'underline'}}>Go to Settings</button></div>`}
+    <div style=${{maxWidth:900,margin:'0 auto',padding:'24px',animation:'fadeIn 0.2s ease'}}>
+      <div style=${{marginBottom:20}}>
+        <div style=${{fontSize:19,fontWeight:600,color:C.tx}}>New Campaign Brief</div>
+        <div style=${{fontSize:13,color:C.dm,marginTop:3}}>Fill in the brief → Submit → AI generates copy + images + video automatically.</div>
+      </div>
+
       <${Card} style=${{padding:24,marginBottom:14}}>
         <${Sec} t="Campaign basics">
           <div style=${G}>
             <${Fd} label="Client" req>
-              <select style=${inp()} value=${form.clientId} onChange=${e=>selectClient(e.target.value)}><option value="">Select client…</option>${clients.filter(c=>c.status==='active'||c.status==='onboarding').map(c=>html`<option key=${c.id} value=${c.id}>${c.basics.brandName||c.basics.clientName}</option>`)}</select>
+              <select style=${inp()} value=${form.clientId} onChange=${e=>selectClient(e.target.value)}>
+                <option value="">Select client…</option>
+                ${clients.map(c=>html`<option key=${c.id} value=${c.id}>${c.basics.brandName||c.basics.clientName}</option>`)}
+              </select>
             </${Fd}>
-            <${Fd} label="Campaign name" req><input style=${inp()} value=${form.campaignName} onChange=${e=>sf('campaignName',e.target.value)} placeholder="e.g. Ramadan Launch 2025"/></${Fd}>
-            <${Fd} label="Goal" req><select style=${inp()} value=${form.goal} onChange=${e=>sf('goal',e.target.value)}><option value="">Select…</option>${GOALS.map(g=>html`<option key=${g} value=${g}>${g}</option>`)}</select></${Fd}>
-            <${Fd} label="Urgency"><select style=${inp()} value=${form.urgency} onChange=${e=>sf('urgency',e.target.value)}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent — within 24hrs</option></select></${Fd}>
-            <${Fd} label="Deadline"><input style=${inp()} type="date" value=${form.deadline} onChange=${e=>sf('deadline',e.target.value)}/></${Fd}>
-            <${Fd} label="Variants per format"><select style=${inp()} value=${form.numVariants} onChange=${e=>sf('numVariants',parseInt(e.target.value))}>${[1,2,3,4,5,6,8,10].map(n=>html`<option key=${n} value=${n}>${n} variant${n>1?'s':''}</option>`)}</select></${Fd}>
+            <${Fd} label="Campaign name" req>
+              <input style=${inp()} value=${form.campaignName} onChange=${e=>sf('campaignName',e.target.value)} placeholder="e.g. Titan June Promo 2026"/>
+            </${Fd}>
+            <${Fd} label="Campaign goal" req>
+              <select style=${inp()} value=${form.goal} onChange=${e=>sf('goal',e.target.value)}>
+                <option value="">Select goal…</option>
+                ${GOALS.map(g=>html`<option key=${g} value=${g}>${g}</option>`)}
+              </select>
+            </${Fd}>
+            <${Fd} label="Urgency">
+              <select style=${inp()} value=${form.urgency} onChange=${e=>sf('urgency',e.target.value)}>
+                <option value="low">Low</option><option value="normal">Normal</option>
+                <option value="high">High</option><option value="urgent">Urgent — within 24hrs</option>
+              </select>
+            </${Fd}>
+            <${Fd} label="Start date">
+              <input style=${inp()} type="date" value=${form.startDate} onChange=${e=>sf('startDate',e.target.value)}/>
+            </${Fd}>
+            <${Fd} label="End date / deadline">
+              <input style=${inp()} type="date" value=${form.deadline} onChange=${e=>sf('deadline',e.target.value)}/>
+            </${Fd}>
           </div>
+          ${form.clientId&&html`<${AudienceContext} client=${getClient()}/>`}
         </${Sec}>
-        <${Sec} t="Platforms & content types">
-          <div style=${{marginBottom:16}}><${Lb}>Target platforms *</${Lb}><${Chips} opts=${PLATFORMS} selected=${form.platforms} onToggle=${v=>togArr('platforms',v)}/></div>
-          <div><${Lb}>Content types *</${Lb}><${Chips} opts=${CONTENT_TYPES} selected=${form.contentTypes} onToggle=${v=>togArr('contentTypes',v)}/></div>
-        </${Sec}>
-        <${Sec} t="Content brief">
+      </${Card}>
+
+      <${Card} style=${{padding:24,marginBottom:14}}>
+        <${Sec} t="KPIs & Budget" sub="Define what success looks like — AI will optimise to these targets.">
           <div style=${G}>
-            <${Fd} label="Product / offer" span2><textarea style=${inp({resize:'vertical',minHeight:72})} value=${form.productOffer} onChange=${e=>sf('productOffer',e.target.value)} placeholder="What specifically are we promoting? e.g. Cold Brew 250ml – RM15, launching 1 June"/></${Fd}>
-            <${Fd} label="Key message" span2><textarea style=${inp({resize:'vertical',minHeight:72})} value=${form.keyMessage} onChange=${e=>sf('keyMessage',e.target.value)} placeholder="The single most important thing the audience must take away…"/></${Fd}>
-            <${Fd} label="Audience notes"><textarea style=${inp({resize:'vertical',minHeight:60})} value=${form.targetAudience} onChange=${e=>sf('targetAudience',e.target.value)} placeholder="Specific segment for this campaign…"/></${Fd}>
-            <${Fd} label="Tone override"><select style=${inp()} value=${form.toneOverride} onChange=${e=>sf('toneOverride',e.target.value)}>${TONES_OVR.map(t=>html`<option key=${t} value=${t}>${t}</option>`)}</select></${Fd}>
-            <${Fd} label="Additional notes" span2><textarea style=${inp({resize:'vertical',minHeight:60})} value=${form.additionalNotes} onChange=${e=>sf('additionalNotes',e.target.value)} placeholder="Special instructions, must-include elements, mandatory disclaimers…"/></${Fd}>
+            <${Fd} label="Primary KPI">
+              <select style=${inp()} value=${form.kpiType} onChange=${e=>sf('kpiType',e.target.value)}>
+                <option value="">Select KPI…</option>
+                ${KPI_TYPES.map(k=>html`<option key=${k} value=${k}>${k}</option>`)}
+              </select>
+            </${Fd}>
+            <${Fd} label="KPI Target" hint="e.g. 1000 leads, 5% CTR, MYR 2 CPL">
+              <input style=${inp()} value=${form.kpiTarget} onChange=${e=>sf('kpiTarget',e.target.value)} placeholder="e.g. 500 new leads"/>
+            </${Fd}>
+            <${Fd} label="Total budget (MYR)" hint="Across all channels for this campaign">
+              <input style=${inp()} type="number" value=${form.kpiBudgetMYR} onChange=${e=>sf('kpiBudgetMYR',e.target.value)} placeholder="e.g. 5000"/>
+            </${Fd}>
+            <${Fd} label="Landing page URL" hint="Where campaign traffic should go">
+              <input style=${inp()} type="url" value=${form.landingPageUrl} onChange=${e=>sf('landingPageUrl',e.target.value)} placeholder="https://titanballmachines.my/promo"/>
+            </${Fd}>
           </div>
         </${Sec}>
       </${Card}>
-      ${form.clientId&&html`<div style=${{background:`${C.ok}07`,border:`0.5px solid ${C.ok}30`,borderRadius:8,padding:'12px 16px',marginBottom:14,fontSize:12,color:C.ok}}>✓ Brand brief will be auto-included in n8n payload for <strong>${form.brandName}</strong></div>`}
-      <div style=${{display:'flex',justifyContent:'flex-end',gap:8}}>
+
+      <${Card} style=${{padding:24,marginBottom:14}}>
+        <${Sec} t="Channels & content formats" sub="Select which platforms to run on and what content types to produce. AI will generate assets for each combination.">
+          ${PLATFORMS.map(group=>html`<div key=${group.g} style=${{marginBottom:14}}>
+            <div style=${{fontSize:10,color:C.mt,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:6}}>${group.g}</div>
+            <${Chips} opts=${group.items} selected=${form.platforms} onToggle=${v=>togArr('platforms',v)}/>
+          </div>`)}
+          <div style=${{borderTop:`0.5px solid ${C.bd}`,paddingTop:14,marginTop:4}}>
+            <div style=${{fontSize:10,color:C.mt,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:6}}>Content formats to generate</div>
+            <${Chips} opts=${CONTENT_TYPES} selected=${form.contentTypes} onToggle=${v=>togArr('contentTypes',v)}/>
+          </div>
+          <div style=${{display:'flex',gap:14,marginTop:14,alignItems:'center'}}>
+            <${Fd} label="Variants per format">
+              <select style=${inp({width:160})} value=${form.numVariants} onChange=${e=>sf('numVariants',parseInt(e.target.value))}>
+                ${[1,2,3,4,5].map(n=>html`<option key=${n} value=${n}>${n} variant${n>1?'s':''}</option>`)}
+              </select>
+            </${Fd}>
+          </div>
+        </${Sec}>
+      </${Card}>
+
+      <${Card} style=${{padding:24,marginBottom:14}}>
+        <${Sec} t="Campaign brief" sub="This is the core creative brief. AI uses everything above + your brand brief from App 1 automatically.">
+          <div style=${G}>
+            <${Fd} label="Product / offer" span2 req>
+              <textarea style=${inp({resize:'vertical',minHeight:72})} value=${form.productOffer} onChange=${e=>sf('productOffer',e.target.value)} placeholder="What specifically are we promoting? e.g. Double the Drills, Half the Price — book any Titan machine at partner courts and get 2 for 1 sessions in June"/>
+            </${Fd}>
+            <${Fd} label="Key message" span2 req>
+              <textarea style=${inp({resize:'vertical',minHeight:72})} value=${form.keyMessage} onChange=${e=>sf('keyMessage',e.target.value)} placeholder="The single most important thing the audience must feel or do after seeing this campaign…"/>
+            </${Fd}>
+            <${Fd} label="Additional notes / special instructions" span2>
+              <textarea style=${inp({resize:'vertical',minHeight:60})} value=${form.additionalNotes} onChange=${e=>sf('additionalNotes',e.target.value)} placeholder="Must-include elements, mandatory disclaimers, reference campaigns, cultural context…"/>
+            </${Fd}>
+          </div>
+        </${Sec}>
+      </${Card}>
+
+      ${form.clientId&&html`<div style=${{background:`${C.ac}07`,border:`0.5px solid ${C.ac}30`,borderRadius:8,padding:'10px 16px',marginBottom:14,fontSize:12,color:C.ac}}>
+        ✓ <strong>${form.brandName}</strong>'s full brand brief (voice, audience, USPs, tone, competitors) will be automatically included — no re-entry needed.
+      </div>`}
+      <div style=${{display:'flex',justifyContent:'flex-end',gap:8,paddingBottom:48}}>
         <button onClick=${goBack} style=${pbtn(false,{fontSize:13,padding:'9px 20px'})}>Cancel</button>
-        <button onClick=${submitRequest} disabled=${submitting} style=${pbtn(true,{fontSize:13,padding:'9px 24px',fontWeight:500})}>${submitting?'Sending to n8n…':'🚀 Submit & Trigger n8n'}</button>
+        <button onClick=${()=>submitRequest(true)} disabled=${submitting} style=${pbtn(false,{fontSize:13,padding:'9px 20px'})}>Save as Draft</button>
+        <button onClick=${()=>submitRequest(false)} disabled=${submitting} style=${pbtn(true,{fontSize:13,padding:'9px 28px',fontWeight:600})}>
+          ${submitting?'🤖 Generating content…':'🚀 Submit & Generate Content'}
+        </button>
       </div>
     </div>`;
 
   const detailView=det&&html`
-    <div style=${{maxWidth:920,margin:'0 auto',padding:'24px'}}>
+    <div style=${{maxWidth:960,margin:'0 auto',padding:'24px'}}>
       <${Card} style=${{padding:20,marginBottom:14}}>
         <div style=${{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12,flexWrap:'wrap'}}>
           <div style=${{flex:1}}>
             <div style=${{fontSize:21,fontWeight:700,color:C.tx,marginBottom:4}}>${det.campaignName}</div>
             <div style=${{fontSize:13,color:C.dm,marginBottom:8}}>${det.brandName} · ${det.goal}</div>
             <div style=${{display:'flex',flexWrap:'wrap',gap:6}}>
-              <${SBadge} status=${det.status} size="lg"/>
-              ${det.urgency==='urgent'&&html`<span style=${{background:'#f8717115',color:C.er,border:`0.5px solid ${C.er}50`,borderRadius:20,padding:'4px 12px',fontSize:11,fontWeight:500}}>🔥 URGENT</span>`}
-              ${det.deadline&&html`<span style=${{background:C.s3,color:C.dm,border:`0.5px solid ${C.bd}`,borderRadius:20,padding:'4px 12px',fontSize:11}}>📅 Due ${fmtd(det.deadline)}</span>`}
-              <span style=${{background:det.webhookStatus==='sent'?`${C.ok}15`:`${C.er}15`,color:det.webhookStatus==='sent'?C.ok:C.er,border:`0.5px solid ${det.webhookStatus==='sent'?C.ok:C.er}50`,borderRadius:20,padding:'4px 12px',fontSize:11}}>${det.webhookStatus==='sent'?'✓ n8n triggered':'⚠ webhook not sent'}</span>
+              <${SBadge} status=${det.status}/>
+              ${det.deadline&&html`<span style=${{background:C.s3,color:C.dm,border:`0.5px solid ${C.bd}`,borderRadius:20,padding:'3px 11px',fontSize:11}}>📅 ${fmtd(det.startDate)||'?'} → ${fmtd(det.deadline)}</span>`}
+              ${det.kpiBudgetMYR&&html`<span style=${{background:C.s3,color:C.tl,border:`0.5px solid ${C.bd}`,borderRadius:20,padding:'3px 11px',fontSize:11}}>💰 MYR ${det.kpiBudgetMYR}</span>`}
+              ${det.kpiType&&html`<span style=${{background:C.s3,color:C.pu,border:`0.5px solid ${C.bd}`,borderRadius:20,padding:'3px 11px',fontSize:11}}>🎯 ${det.kpiType}: ${det.kpiTarget||'?'}</span>`}
             </div>
           </div>
-          <div style=${{textAlign:'right',flexShrink:0}}><div style=${{fontSize:11,color:C.mt}}>Submitted ${fmtdt(det.createdAt)}</div></div>
+          <div style=${{textAlign:'right',flexShrink:0}}><div style=${{fontSize:11,color:C.mt}}>${fmtdt(det.createdAt)}</div></div>
         </div>
       </${Card}>
       <${Card} style=${{padding:18,marginBottom:14}}>
         <${Sec} t="Update status">
           <div style=${{display:'flex',flexWrap:'wrap',gap:6}}>
-            ${Object.entries(STATUSES).map(([k,s])=>html`<button key=${k} onClick=${()=>updateStatus(det.id,k)} style=${{background:det.status===k?s.bg:'transparent',color:det.status===k?s.c:C.dm,border:`0.5px solid ${det.status===k?s.c:C.bd}50`,borderRadius:20,padding:'5px 14px',fontSize:12,cursor:'pointer',fontWeight:det.status===k?600:400}}>${det.status===k?'● ':''} ${s.l}</button>`)}
+            ${Object.entries(STATUSES).map(([k,s])=>html`<button key=${k} onClick=${()=>updateStatus(det.id,k)}
+              style=${{background:det.status===k?s.bg:'transparent',color:det.status===k?s.c:C.dm,border:`0.5px solid ${det.status===k?s.c:C.bd}50`,borderRadius:20,padding:'5px 14px',fontSize:12,cursor:'pointer',fontWeight:det.status===k?600:400}}>
+              ${det.status===k?'● ':''} ${s.l}</button>`)}
           </div>
         </${Sec}>
       </${Card}>
       <div style=${{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
         <${Card} style=${{padding:18}}>
-          <${Sec} t="Brief summary">
-            <div style=${{fontSize:13,color:C.dm,display:'flex',flexDirection:'column',gap:6}}>
-              ${det.productOffer&&html`<div style=${{display:'flex',gap:8}}><span style=${{minWidth:100,flexShrink:0}}>Product</span><span style=${{color:C.tx,lineHeight:1.5}}>${det.productOffer}</span></div>`}
-              ${det.keyMessage&&html`<div style=${{display:'flex',gap:8}}><span style=${{minWidth:100,flexShrink:0}}>Key message</span><span style=${{color:C.tx,lineHeight:1.5}}>${det.keyMessage}</span></div>`}
-              <div style=${{display:'flex',gap:8}}><span style=${{minWidth:100,flexShrink:0}}>Tone</span><span style=${{color:C.tx}}>${det.toneOverride}</span></div>
-              <div style=${{display:'flex',gap:8}}><span style=${{minWidth:100,flexShrink:0}}>Variants</span><span style=${{color:C.tx}}>${det.numVariants}</span></div>
+          <${Sec} t="Brief">
+            <div style=${{fontSize:13,color:C.dm,display:'flex',flexDirection:'column',gap:7}}>
+              ${det.productOffer&&html`<div><div style=${{fontSize:10,color:C.mt,marginBottom:2}}>OFFER</div><div style=${{color:C.tx,lineHeight:1.5}}>${det.productOffer}</div></div>`}
+              ${det.keyMessage&&html`<div><div style=${{fontSize:10,color:C.mt,marginBottom:2}}>KEY MESSAGE</div><div style=${{color:C.tx,lineHeight:1.5}}>${det.keyMessage}</div></div>`}
+              ${det.landingPageUrl&&html`<div><div style=${{fontSize:10,color:C.mt,marginBottom:2}}>LANDING PAGE</div><a href=${det.landingPageUrl} target="_blank" style=${{color:C.ac,fontSize:12}}>${det.landingPageUrl}</a></div>`}
             </div>
-          </${Sec}>
-          <${Sec} t="Platforms">
-            <div style=${{display:'flex',flexWrap:'wrap',gap:5}}>${(det.platforms||[]).map((p,i)=>html`<span key=${i} style=${{background:C.s3,border:`0.5px solid ${C.bd}`,borderRadius:4,padding:'2px 9px',fontSize:12,color:C.dm}}>${p}</span>`)}</div>
           </${Sec}>
         </${Card}>
         <${Card} style=${{padding:18}}>
           <${Sec} t="Activity log">
-            <div style=${{display:'flex',flexDirection:'column',gap:5,maxHeight:240,overflowY:'auto'}}>
-              ${(det.activityLog||[]).slice().reverse().map((l,i)=>html`<div key=${i} style=${{display:'flex',gap:8,fontSize:12,padding:'7px 10px',background:C.s2,borderRadius:6}}><span style=${{color:l.type==='ok'?C.ok:l.type==='er'?C.er:C.dm,flexShrink:0}}>${l.type==='ok'?'✓':l.type==='er'?'✕':'·'}</span><div style=${{flex:1}}><div style=${{color:C.tx}}>${l.msg}</div><div style=${{color:C.mt,marginTop:2}}>${fmtdt(l.time)}</div></div></div>`)}
-              ${!(det.activityLog?.length)&&html`<div style=${{color:C.mt,fontSize:12}}>No activity yet</div>`}
+            <div style=${{display:'flex',flexDirection:'column',gap:5,maxHeight:200,overflowY:'auto'}}>
+              ${(det.activityLog||[]).slice().reverse().map((l,i)=>html`<div key=${i} style=${{display:'flex',gap:8,fontSize:12,padding:'6px 10px',background:C.s2,borderRadius:6}}>
+                <span style=${{color:l.type==='ok'?C.ok:l.type==='er'?C.er:C.dm,flexShrink:0}}>${l.type==='ok'?'✓':l.type==='er'?'✕':'·'}</span>
+                <div><div style=${{color:C.tx}}>${l.msg}</div><div style=${{color:C.mt,marginTop:1}}>${fmtdt(l.time)}</div></div>
+              </div>`)}
+            </div>
+          </${Sec}>
+          <${Sec} t="Platforms">
+            <div style=${{display:'flex',flexWrap:'wrap',gap:5}}>
+              ${(det.platforms||[]).map((p,i)=>html`<span key=${i} style=${{background:C.s3,border:`0.5px solid ${C.bd}`,borderRadius:4,padding:'2px 8px',fontSize:11,color:C.dm}}>${p}</span>`)}
             </div>
           </${Sec}>
         </${Card}>
       </div>
-      <${Card} style=${{padding:20,marginBottom:14}}>
-        <${Sec} t="Assets" action=${html`<button onClick=${()=>addAsset(det.id)} style=${pbtn(false,{fontSize:11,padding:'3px 10px'})}>+ Add Asset</button>`}>
-          ${!(det.assets?.length)&&html`<div style=${{textAlign:'center',padding:'24px',color:C.dm,border:`1px dashed ${C.bd}`,borderRadius:8}}><div style=${{marginBottom:8}}>No assets yet — n8n will populate these, or add manually</div><button onClick=${()=>addAsset(det.id)} style=${pbtn(false,{fontSize:12,padding:'5px 14px'})}>+ Add Manually</button></div>`}
-          ${(det.assets||[]).map((a,i)=>html`<div key=${a.id} style=${{background:C.s2,border:`0.5px solid ${C.bd}`,borderRadius:8,padding:'12px 14px',marginBottom:8,display:'grid',gridTemplateColumns:'1fr 1fr auto auto auto',gap:'8px 12px',alignItems:'center'}}>
-            <select style=${inp({fontSize:12,padding:'4px 8px'})} value=${a.type} onChange=${e=>updateAsset(det.id,a.id,'type',e.target.value)}><option value="">Type…</option>${ASSET_TYPES.map(t=>html`<option key=${t} value=${t}>${t}</option>`)}</select>
-            <input style=${inp({fontSize:12,padding:'4px 8px'})} value=${a.name} onChange=${e=>updateAsset(det.id,a.id,'name',e.target.value)} placeholder="Asset name…"/>
-            <select style=${inp({fontSize:11,padding:'4px 8px',width:'auto'})} value=${a.status} onChange=${e=>updateAsset(det.id,a.id,'status',e.target.value)}>${Object.entries(STATUSES).map(([k,s])=>html`<option key=${k} value=${k}>${s.l}</option>`)}</select>
-            <input style=${inp({fontSize:11,padding:'4px 8px',width:160})} value=${a.url} onChange=${e=>updateAsset(det.id,a.id,'url',e.target.value)} placeholder="Drive link…"/>
-            <button onClick=${()=>removeAsset(det.id,a.id)} style=${{background:'none',border:'none',color:C.er,cursor:'pointer',fontSize:16,padding:'0 4px'}}>×</button>
-          </div>`)}
+      <${Card} style=${{padding:18,marginBottom:14}}>
+        <${Sec} t="Content review" sub="Assets generated by AI appear in App 4 (Content Approval) for review.">
+          <a href="https://omniraai-content-approval.vercel.app" target="_blank"
+            style=${{display:'inline-block',background:C.pu,color:'#fff',borderRadius:6,padding:'8px 18px',fontSize:13,fontWeight:600,textDecoration:'none'}}>
+            → Open Content Approval (App 4)
+          </a>
         </${Sec}>
       </${Card}>
     </div>`;
@@ -349,51 +452,56 @@ function App(){
     <div style=${{padding:'24px',maxWidth:1200,margin:'0 auto'}}>
       ${loading?html`<${Spinner}/>`:html`<div>
         <div style=${{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:22}}>
-          ${[['Total',stats.total,C.tx],['Active',stats.active,C.ac],['Ready Review',stats.review,C.pu],['Published',stats.published,C.ok]].map(([l,v,c])=>html`<div key=${l} style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:8,padding:'13px 16px'}}><div style=${{fontSize:26,fontWeight:600,color:c,lineHeight:1.1}}>${v}</div><div style=${{fontSize:12,color:C.dm,marginTop:3}}>${l}</div></div>`)}
-        </div>
-        <div style=${{background:webhookUrl?`${C.ok}0d`:`${C.wn}0d`,border:`0.5px solid ${webhookUrl?C.ok:C.wn}40`,borderRadius:8,padding:'10px 16px',marginBottom:18,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-          <div style=${{display:'flex',alignItems:'center',gap:8,fontSize:13}}>
-            <div style=${{width:8,height:8,borderRadius:'50%',background:webhookUrl?C.ok:C.wn,boxShadow:`0 0 6px ${webhookUrl?C.ok:C.wn}`}}></div>
-            <span style=${{color:webhookUrl?C.ok:C.wn,fontWeight:500}}>${webhookUrl?'n8n webhook configured':'n8n webhook not set'}</span>
-            ${webhookUrl&&html`<span style=${{color:C.dm,fontSize:11,fontFamily:'monospace'}}>${webhookUrl.length>60?webhookUrl.slice(0,58)+'…':webhookUrl}</span>`}
-          </div>
-          <button onClick=${()=>setView('settings')} style=${pbtn(false,{fontSize:12,padding:'4px 12px'})}>⚙ ${webhookUrl?'Edit':'Set up'}</button>
+          ${[['Total',stats.total,C.tx,'📋'],['Generating',stats.generating,C.wn,'🤖'],['Ready Review',stats.review,C.pu,'👁'],['Published',stats.published,C.ok,'🚀']].map(([l,v,c,icon])=>html`
+            <div key=${l} style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:8,padding:'13px 16px'}}>
+              <div style=${{fontSize:26,fontWeight:600,color:c,lineHeight:1.1}}>${v}</div>
+              <div style=${{fontSize:12,color:C.dm,marginTop:3}}>${icon} ${l}</div>
+            </div>`)}
         </div>
         <div style=${{display:'flex',gap:8,marginBottom:18,flexWrap:'wrap',alignItems:'center'}}>
           <input style=${inp({flex:1,minWidth:180})} placeholder="Search campaigns…" value=${srch} onChange=${e=>setSrch(e.target.value)}/>
-          <select style=${inp({width:'auto',minWidth:140})} value=${filterClient} onChange=${e=>setFilterClient(e.target.value)}><option value="all">All clients</option>${clients.map(c=>html`<option key=${c.id} value=${c.id}>${c.basics.brandName||c.basics.clientName}</option>`)}</select>
+          <select style=${inp({width:'auto',minWidth:140})} value=${filterClient} onChange=${e=>setFilterClient(e.target.value)}>
+            <option value="all">All clients</option>
+            ${clients.map(c=>html`<option key=${c.id} value=${c.id}>${c.basics.brandName||c.basics.clientName}</option>`)}
+          </select>
           <div style=${{display:'flex',gap:4,flexWrap:'wrap'}}>
-            ${[['all','All'],['requested','Requested'],['generating','Generating'],['review','Review'],['approved','Approved'],['revision','Revision'],['published','Published'],['cancelled','Cancelled']].map(([k,l])=>html`<button key=${k} onClick=${()=>setFilterStatus(k)} style=${{...pbtn(filterStatus===k),fontSize:11,padding:'5px 10px',background:filterStatus===k?C.ac:'transparent'}}>${l}</button>`)}
+            ${[['all','All'],['draft','Draft'],['generating','Generating'],['review','Review'],['approved','Approved'],['published','Published']].map(([k,l])=>html`
+              <button key=${k} onClick=${()=>setFilterStatus(k)} style=${{...pbtn(filterStatus===k),fontSize:11,padding:'5px 10px'}}>${l}</button>`)}
           </div>
         </div>
-        ${filtered.length===0?html`<div style=${{textAlign:'center',padding:'60px',color:C.dm}}><div style=${{fontSize:48,marginBottom:14}}>📋</div><div style=${{fontSize:17,color:C.tx,marginBottom:6}}>${campaigns.length===0?'No campaigns yet':'No results'}</div>${campaigns.length===0&&html`<button onClick=${startNew} style=${pbtn(true,{padding:'10px 26px',fontSize:14})}>+ New Content Request</button>`}</div>`
-        :html`<div style=${{display:'flex',flexDirection:'column',gap:10}}>
-          ${filtered.map(c=>html`
-            <div key=${c.id} style=${{background:C.s1,border:`0.5px solid ${c.urgency==='urgent'?C.er:C.bd}`,borderRadius:10,padding:'14px 18px',cursor:'pointer',transition:'border-color .15s',display:'grid',gridTemplateColumns:'1fr auto',gap:'10px',alignItems:'center'}} onMouseEnter=${e=>e.currentTarget.style.borderColor=C.bdB} onMouseLeave=${e=>e.currentTarget.style.borderColor=c.urgency==='urgent'?C.er:C.bd} onClick=${()=>openDet(c)}>
-              <div>
-                <div style=${{display:'flex',alignItems:'center',gap:8,marginBottom:5,flexWrap:'wrap'}}>
-                  <span style=${{fontSize:14,fontWeight:600,color:C.tx}}>${c.campaignName}</span>
-                  <${SBadge} status=${c.status}/>
-                  ${c.urgency==='urgent'&&html`<span style=${{fontSize:10,color:C.er,fontWeight:600}}>🔥 URGENT</span>`}
-                  ${c.webhookStatus==='failed'&&html`<span style=${{fontSize:10,color:C.wn}}>⚠ webhook failed</span>`}
+        ${filtered.length===0
+          ?html`<div style=${{textAlign:'center',padding:'60px',color:C.dm}}>
+            <div style=${{fontSize:48,marginBottom:14}}>📋</div>
+            <div style=${{fontSize:17,color:C.tx,marginBottom:12}}>${campaigns.length===0?'No campaigns yet':'No results'}</div>
+            ${campaigns.length===0&&html`<button onClick=${startNew} style=${pbtn(true,{padding:'10px 26px',fontSize:14})}>+ New Campaign Brief</button>`}
+          </div>`
+          :html`<div style=${{display:'flex',flexDirection:'column',gap:10}}>
+            ${filtered.map(c=>html`
+              <div key=${c.id} style=${{background:C.s1,border:`0.5px solid ${c.urgency==='urgent'?C.er:C.bd}`,borderRadius:10,padding:'14px 18px',cursor:'pointer',display:'grid',gridTemplateColumns:'1fr auto',gap:10,alignItems:'center'}}
+                onMouseEnter=${e=>e.currentTarget.style.borderColor=C.bdB} onMouseLeave=${e=>e.currentTarget.style.borderColor=c.urgency==='urgent'?C.er:C.bd}
+                onClick=${()=>openDet(c)}>
+                <div>
+                  <div style=${{display:'flex',alignItems:'center',gap:8,marginBottom:5,flexWrap:'wrap'}}>
+                    <span style=${{fontSize:14,fontWeight:600,color:C.tx}}>${c.campaignName}</span>
+                    <${SBadge} status=${c.status}/>
+                    ${c.kpiType&&html`<span style=${{fontSize:11,color:C.pu}}>🎯 ${c.kpiType}</span>`}
+                  </div>
+                  <div style=${{display:'flex',gap:10,fontSize:12,color:C.dm,flexWrap:'wrap'}}>
+                    <span>${c.brandName}</span><span>·</span><span>${c.goal}</span>
+                    ${c.deadline&&html`<span>· 📅 ${fmtd(c.deadline)}</span>`}
+                    ${c.kpiBudgetMYR&&html`<span>· 💰 MYR ${c.kpiBudgetMYR}</span>`}
+                  </div>
                 </div>
-                <div style=${{display:'flex',gap:12,fontSize:12,color:C.dm,flexWrap:'wrap'}}>
-                  <span>${c.brandName}</span><span>·</span><span>${c.goal}</span>
-                  ${c.deadline&&html`<span>· 📅 ${fmtd(c.deadline)}</span>`}
-                  <span>· ${c.numVariants} variants</span>
-                </div>
-              </div>
-              <div style=${{textAlign:'right'}}><div style=${{fontSize:11,color:C.mt}}>${fmtdt(c.createdAt)}</div>${(c.assets||[]).length>0&&html`<div style=${{fontSize:11,color:C.dm,marginTop:3}}>${c.assets.length} asset${c.assets.length>1?'s':''}</div>`}</div>
-            </div>`)}
-        </div>`}
+                <div style=${{textAlign:'right'}}><div style=${{fontSize:11,color:C.mt}}>${fmtdt(c.createdAt)}</div></div>
+              </div>`)}
+          </div>`}
       </div>`}
     </div>`;
 
   return html`
     <div style=${{minHeight:'100vh',background:C.bg,color:C.tx}}>
-      <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
       ${hdr}
-      <div style=${{paddingBottom:48}}>${view==='tracker'&&tracker}${view==='new'&&newForm}${view==='detail'&&detailView}${view==='settings'&&settingsView}</div>
+      <div style=${{paddingBottom:48}}>${view==='tracker'&&tracker}${view==='new'&&newForm}${view==='detail'&&detailView}</div>
       ${toast&&html`<div style=${{position:'fixed',bottom:24,right:24,background:C.s1,border:`1px solid ${toastType==='ok'?C.ok:toastType==='er'?C.er:C.wn}60`,borderRadius:8,padding:'10px 18px',fontSize:13,color:C.tx,zIndex:999,maxWidth:340}}>${toast}</div>`}
     </div>`;
 }
