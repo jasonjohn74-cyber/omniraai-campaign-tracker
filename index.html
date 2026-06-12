@@ -143,6 +143,21 @@ function EmailComposer({clients,onClose,showToast}){
 
   const addCta=()=>setCtas(p=>[...p,{label:'',url:'',desc:''}]);
   const subjRef=useRef(null), bodyRef=useRef(null);
+  // Email Kit: per-client reusable components saved in App 1 (clients.data.emailKit)
+  function applyKit(force){
+    const c=clients.find(x=>x.id===clientId);
+    const kit=c&&c.emailKit;
+    if(!kit||(!kit.footer&&!kit.bannerUrl&&!(kit.ctas||[]).length)){
+      if(force)showToast('No Email Kit saved for this client yet — add one in Brand Manager (App 1) → Brand Voice tab','er');
+      return;
+    }
+    if(kit.footer&&(force||footer===DEFAULT_EMAIL_FOOTER||!footer.trim()))setFooter(kit.footer);
+    if(kit.bannerUrl&&(force||!banner.trim()))setBanner(kit.bannerUrl);
+    if(Array.isArray(kit.ctas)&&kit.ctas.filter(x=>x.label&&x.url).length&&(force||ctas.length===0))
+      setCtas(kit.ctas.filter(x=>x.label&&x.url).map(x=>({label:x.label||'',url:x.url||'',desc:x.desc||''})));
+    if(force)showToast('Email Kit applied ✓','ok');
+  }
+  useEffect(()=>{applyKit(false);},[clientId]);
   // Insert emoji at cursor (falls back to append)
   const pickEmoji=(ref,cur,set)=>em=>{
     const el=ref.current;
@@ -254,7 +269,7 @@ function EmailComposer({clients,onClose,showToast}){
     </${Card}>
 
     <${Card} style=${{padding:22,marginBottom:14}}>
-      <${Sec} t="Footer sign-off" sub="Templated by default — customize the credentials and links as needed.">
+      <${Sec} t="Footer sign-off" sub="Templated by default — customize the credentials and links as needed. Selecting a client auto-loads their Email Kit (App 1)." action=${html`<button onClick=${()=>applyKit(true)} style=${pbtn(false,{fontSize:12,padding:'4px 12px'})}>↻ Load Email Kit</button>`}>
         <textarea style=${inp({resize:'vertical',minHeight:80,fontSize:12,lineHeight:1.6})} value=${footer} onChange=${e=>setFooter(e.target.value)}/>
       </${Sec}>
     </${Card}>
