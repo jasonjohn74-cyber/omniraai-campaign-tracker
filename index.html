@@ -21,7 +21,7 @@ input,select,textarea,button{font-family:inherit;}
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/htm@3/dist/htm.js"></script>
 <script>
-const{useState,useEffect}=React;
+const{useState,useEffect,useRef}=React;
 const html=htm.bind(React.createElement);
 
 const SB_URL='https://vchtdsfrryxnvceierkn.supabase.co';
@@ -116,6 +116,15 @@ function AudienceContext({client}){
 }
 
 // ── EMAIL COMPOSER ────────────────────────────────────────────
+// Quick emoji palette — inserts at cursor in the linked field
+function EmojiBar({onPick}){
+  const EMOJIS=['🎾','🏓','🔥','💪','🚀','🎯','✅','⭐','🎉','💥','⚡','🏆','👇','👉','📅','💰','🤝','😊','🙌','❤️'];
+  return html`<div style=${{display:'flex',gap:4,flexWrap:'wrap',marginTop:6}}>
+    ${EMOJIS.map(em=>html`<button key=${em} type="button" onClick=${()=>onPick(em)} title="Insert ${em}"
+      style=${{background:'transparent',border:`0.5px solid ${C.bd}`,borderRadius:5,padding:'2px 7px',fontSize:15,cursor:'pointer',lineHeight:1.3}}>${em}</button>`)}
+  </div>`;
+}
+
 // Create an email (AI-generated or manual) → content_approvals → App 4 approves → Brevo sends.
 function EmailComposer({clients,onClose,showToast}){
   const[seriesName,setSeriesName]=useState('');
@@ -132,7 +141,17 @@ function EmailComposer({clients,onClose,showToast}){
   const[aiBusy,setAiBusy]=useState(false);
   const[saving,setSaving]=useState(false);
 
-  const addCta=()=>setCtas(p=>[...p,{label:'',url:''}]);
+  const addCta=()=>setCtas(p=>[...p,{label:'',url:'',desc:''}]);
+  const subjRef=useRef(null), bodyRef=useRef(null);
+  // Insert emoji at cursor (falls back to append)
+  const pickEmoji=(ref,cur,set)=>em=>{
+    const el=ref.current;
+    if(el&&typeof el.selectionStart==='number'){
+      const s=el.selectionStart,e2=el.selectionEnd;
+      set(cur.slice(0,s)+em+cur.slice(e2));
+      setTimeout(()=>{try{el.focus();el.setSelectionRange(s+em.length,s+em.length);}catch(e){}},0);
+    }else set(cur+em);
+  };
   const updCta=(i,f,v)=>setCtas(p=>p.map((c,j)=>j===i?{...c,[f]:v}:c));
   const rmCta=i=>setCtas(p=>p.filter((_,j)=>j!==i));
 
@@ -204,12 +223,14 @@ function EmailComposer({clients,onClose,showToast}){
         </div>
         <div style=${{marginBottom:14}}>
           <${Lb}>Email Subject Header *</${Lb}>
-          <input style=${inp()} value=${subject} onChange=${e=>setSubject(e.target.value)} placeholder="Subject line recipients see…"/>
+          <input ref=${subjRef} style=${inp()} value=${subject} onChange=${e=>setSubject(e.target.value)} placeholder="Subject line recipients see…"/>
+          <${EmojiBar} onPick=${pickEmoji(subjRef,subject,setSubject)}/>
         </div>
         <div style=${{marginBottom:14}}>
           <${Lb}>Main Body Copy *</${Lb}>
-          <textarea style=${inp({resize:'vertical',minHeight:160,lineHeight:1.7})} value=${body} onChange=${e=>setBody(e.target.value)} placeholder="Write the email body. You can paste links inline as needed…"/>
-          <div style=${{fontSize:11,color:C.mt,marginTop:4}}>Paste external links directly in the copy. Add clickable CTA buttons below.</div>
+          <textarea ref=${bodyRef} style=${inp({resize:'vertical',minHeight:160,lineHeight:1.7})} value=${body} onChange=${e=>setBody(e.target.value)} placeholder="Write the email body. You can paste links inline as needed…"/>
+          <${EmojiBar} onPick=${pickEmoji(bodyRef,body,setBody)}/>
+          <div style=${{fontSize:11,color:C.mt,marginTop:4}}>Paste external links directly in the copy. Write <b>{{firstName}}</b> anywhere (subject too) — each recipient sees their own first name, e.g. "Hi Jason". Add clickable CTA buttons below.</div>
         </div>
         <div>
           <${Lb}>Email Banner Image URL (optional)</${Lb}>
@@ -221,10 +242,13 @@ function EmailComposer({clients,onClose,showToast}){
     <${Card} style=${{padding:22,marginBottom:14}}>
       <${Sec} t="Call-to-action buttons" sub="Each button is clickable and links to any URL — website, Google Drive, YouTube, booking page." action=${html`<button onClick=${addCta} style=${pbtn(false,{fontSize:12,padding:'4px 12px'})}>+ Add button</button>`}>
         ${ctas.length===0?html`<div style=${{fontSize:12,color:C.mt}}>No CTA buttons yet. Add one if you want a clickable button in the email.</div>`:''}
-        ${ctas.map((c,i)=>html`<div key=${i} style=${{display:'grid',gridTemplateColumns:'1fr 1.6fr auto',gap:8,marginBottom:8,alignItems:'center'}}>
-          <input style=${inp()} value=${c.label} onChange=${e=>updCta(i,'label',e.target.value)} placeholder="Button label e.g. Book Now"/>
-          <input style=${inp()} value=${c.url} onChange=${e=>updCta(i,'url',e.target.value)} placeholder="https://… link"/>
-          <button onClick=${()=>rmCta(i)} style=${{background:'none',border:'none',color:C.er,cursor:'pointer',fontSize:18}}>×</button>
+        ${ctas.map((c,i)=>html`<div key=${i} style=${{border:`0.5px solid ${C.bd}`,borderRadius:8,padding:10,marginBottom:10}}>
+          <div style=${{display:'grid',gridTemplateColumns:'1fr 1.6fr auto',gap:8,alignItems:'center',marginBottom:8}}>
+            <input style=${inp()} value=${c.label} onChange=${e=>updCta(i,'label',e.target.value)} placeholder="Button label e.g. Book Now"/>
+            <input style=${inp()} value=${c.url} onChange=${e=>updCta(i,'url',e.target.value)} placeholder="https://… link"/>
+            <button onClick=${()=>rmCta(i)} style=${{background:'none',border:'none',color:C.er,cursor:'pointer',fontSize:18}}>×</button>
+          </div>
+          <input style=${inp({fontSize:12})} value=${c.desc||''} onChange=${e=>updCta(i,'desc',e.target.value)} placeholder="Optional short guide text shown above this button, e.g. 'Watch this week's drill in action:'"/>
         </div>`)}
       </${Sec}>
     </${Card}>
