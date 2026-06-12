@@ -143,9 +143,14 @@ function EmailComposer({clients,onClose,showToast}){
 
   const addCta=()=>setCtas(p=>[...p,{label:'',url:'',desc:''}]);
   const subjRef=useRef(null), bodyRef=useRef(null);
-  // Email Kit: per-client reusable components saved in App 1 (clients.data.emailKit)
+  // Email Kit: per-client reusable components saved in App 1 (clients.data.emailKit).
+  // Fetched FRESH on composer open — the app-level clients list can be stale if App 1 was edited after this tab loaded.
+  const[freshClients,setFreshClients]=useState(null);
+  useEffect(()=>{(async()=>{
+    try{const r=await fetch(`${SB_URL}/rest/v1/clients?select=data`,{headers:SBH});const d=await r.json();if(Array.isArray(d))setFreshClients(d.map(x=>x.data));}catch(e){}
+  })();},[]);
   function applyKit(force){
-    const c=clients.find(x=>x.id===clientId);
+    const c=(freshClients||clients).find(x=>x.id===clientId);
     const kit=c&&c.emailKit;
     if(!kit||(!kit.footer&&!kit.bannerUrl&&!(kit.ctas||[]).length)){
       if(force)showToast('No Email Kit saved for this client yet — add one in Brand Manager (App 1) → Brand Voice tab','er');
@@ -157,7 +162,7 @@ function EmailComposer({clients,onClose,showToast}){
       setCtas(kit.ctas.filter(x=>x.label&&x.url).map(x=>({label:x.label||'',url:x.url||'',desc:x.desc||''})));
     if(force)showToast('Email Kit applied ✓','ok');
   }
-  useEffect(()=>{applyKit(false);},[clientId]);
+  useEffect(()=>{if(clientId)applyKit(false);},[clientId,freshClients]);
   // Insert emoji at cursor (falls back to append)
   const pickEmoji=(ref,cur,set)=>em=>{
     const el=ref.current;
