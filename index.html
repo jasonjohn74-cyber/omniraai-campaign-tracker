@@ -38,7 +38,7 @@ const db={
   async upsertCampaign(c){try{await fetch(`${SB_URL}/rest/v1/campaigns`,{method:'POST',headers:{...SBH,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify({id:c.id,updated_at:c.updatedAt,client_id:c.clientId,status:c.status,data:c})});}catch(e){console.error(e);}},
   async deleteCampaign(id){try{await fetch(`${SB_URL}/rest/v1/campaigns?id=eq.${id}`,{method:'DELETE',headers:SBH});}catch(e){console.error(e);}},
   // Create an email content piece → content_approvals (single source of truth; App 4 approves, n8n+Brevo sends)
-  async createEmailCA(rec){try{const r=await fetch(`${SB_URL}/rest/v1/content_approvals`,{method:'POST',headers:{...SBH,'Prefer':'return=representation'},body:JSON.stringify(rec)});const d=await r.json();return Array.isArray(d)?d[0]:d;}catch(e){console.error(e);return null;}},
+  async createEmailCA(rec){try{const r=await fetch(`${SB_URL}/rest/v1/content_approvals`,{method:'POST',headers:{...SBH,'Prefer':'return=representation'},body:JSON.stringify(rec)});const d=await r.json().catch(()=>null);if(!r.ok){console.error('createEmailCA failed:',r.status,d);return null;}return Array.isArray(d)?d[0]:d;}catch(e){console.error(e);return null;}},
 };
 const N8N_BASE='https://n8n-y8wq-production.up.railway.app';
 const DEFAULT_EMAIL_FOOTER='— The Titan Team\nTitan Ball Machines MY\nweb: titanballmachines.my  ·  IG: @titanballmachines  ·  FB: facebook.com/titanballmachines\nYou are receiving this as a Titan community member.';
