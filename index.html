@@ -410,9 +410,11 @@ function App(){
   const[locked,setLocked]=useState(true);
   const[pmode,setPmode]=useState('check');const[pin,setPin]=useState('');const[pin2,setPin2]=useState('');const[pErr,setPErr]=useState('');const[savedPin,setSavedPin]=useState(null);
   const[clients,setClients]=useState([]);
+  const[dashClientId,setDashClientId]=useState(''); // dashboard-level Client→Brand scope, applies BEFORE the campaign list/create
+  const[dashBrandId,setDashBrandId]=useState('');
   const[campaigns,setCampaigns]=useState([]);
   const[loading,setLoading]=useState(true);
-  const[view,setView]=useState('dash'); // dash | brief
+  const[view,setView]=useState('clients'); // clients | brands | dash | brief
   const[ed,setEd]=useState(null);
   const[saving,setSaving]=useState(false);
   const[assisting,setAssisting]=useState(false);
@@ -442,9 +444,13 @@ function App(){
   const curBrand=()=>(curClient()?.brands||[]).find(b=>b.brandId===ed?.brandId);
   const brandObjForCamp=cmp=>{const c=clients.find(x=>x.id===cmp.clientId);return (c?.brands||[]).find(b=>b.brandId===cmp.brandId);};
 
-  const startNew=()=>{setEd(blankCampaign());setView('brief');};
-  const openEdit=c=>{setEd(migrateCampaign(JSON.parse(JSON.stringify(c))));setView('brief');};
+  const startNew=()=>{setEd({...blankCampaign(),clientId:dashClientId||'',brandId:dashBrandId||''});setView('brief');};
+  const openEdit=c=>{setEd(migrateCampaign(JSON.parse(JSON.stringify(c))));setDashClientId(c.clientId||'');setDashBrandId(c.brandId||'');setView('brief');};
   const goDash=()=>{setView('dash');setEd(null);};
+  // Hierarchy nav: Clients → Brands → Campaigns(dash) → Campaign(brief). Each step scopes dashClientId/dashBrandId.
+  const goClients=()=>{setView('clients');setEd(null);setDashClientId('');setDashBrandId('');};
+  const goBrandsFor=cid=>{setDashClientId(cid);setDashBrandId('');setView('brands');setEd(null);};
+  const goCampaignsFor=(cid,bid)=>{setDashClientId(cid);setDashBrandId(bid);setView('dash');setEd(null);};
   const sf=(f,v)=>setEd(p=>({...p,[f]:v}));
   const sfO=(f,v)=>setEd(p=>({...p,objectiveFields:{...p.objectiveFields,[f]:v}}));
   const sfA=(f,v)=>setEd(p=>({...p,audience:{...p.audience,[f]:v}}));
@@ -837,6 +843,28 @@ function App(){
     }catch(e){showToast('Upload failed: '+e.message,'er');}
     setTpImgBusy('');
   }
+  // Upload a video file → n8n relay → Bunny CDN (never call Bunny directly from the browser — the
+  // write key can't live in client-side code). Mirrors uploadTpImage's UX/state; stores the resulting
+  // CDN url in the same cr.imageUrl field the emission logic already reads for any media type.
+  async function uploadTpVideo(tpId,file){
+    if(!file)return;
+    if(!/^video\//.test(file.type)){showToast('Please choose a video file','er');return;}
+    if(file.size>500*1024*1024){showToast('Video too large (max 500MB)','er');return;}
+    setTpImgBusy(tpId);
+    try{
+      const ext=((file.name.split('.').pop()||'mp4').toLowerCase().replace(/[^a-z0-9]/g,'')||'mp4');
+      const slug=(ed.name||ed.id||'campaign').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').slice(0,40);
+      const fileName=`${slug}-${tpId}-${Date.now()}.${ext}`;
+      const fd=new FormData();fd.append('file',file);
+      const res=await fetch(`${N8N}/webhook/upload-video?fileName=${encodeURIComponent(fileName)}`,{method:'POST',body:fd});
+      const data=await res.json().catch(()=>({success:false,error:'Bad response from upload relay'}));
+      if(!data.success)throw new Error(data.error||'Upload failed');
+      const nbt={...ed.creative.byTouchpoint,[tpId]:{...(ed.creative.byTouchpoint[tpId]||{}),imageUrl:data.cdnUrl,mediaType:'video'}};
+      setEd(p=>({...p,creative:{...p.creative,byTouchpoint:nbt}}));persistSilent({...ed,creative:{...ed.creative,byTouchpoint:nbt}});
+      showToast('Video uploaded ✓');
+    }catch(e){showToast('Upload failed: '+e.message,'er');}
+    setTpImgBusy('');
+  }
   // ── #23 Carousel slide images ──
   const setSlide=(tpId,idx,patch)=>{const cr=ed.creative.byTouchpoint[tpId]||{};const slides=[...(cr.slides||[])];slides[idx]={...(slides[idx]||{}),...patch};const nbt={...ed.creative.byTouchpoint,[tpId]:{...cr,slides}};setEd(p=>({...p,creative:{...p.creative,byTouchpoint:nbt}}));persistSilent({...ed,creative:{...ed.creative,byTouchpoint:nbt}});};
   // Generate/regenerate ONE slide's image
@@ -1000,7 +1028,7 @@ function App(){
 
   const G={display:'grid',gridTemplateColumns:'1fr 1fr',gap:'14px 20px'};
   const isArchived=c=>c.lifecycle==='archived';
-  const filtered=campaigns.filter(c=>(showArchived?isArchived(c):!isArchived(c))&&(!srch||((c.name||'')+(brandObjForCamp(c)?.brandName||'')).toLowerCase().includes(srch.toLowerCase())));
+  const filtered=campaigns.filter(c=>(showArchived?isArchived(c):!isArchived(c))&&(!dashClientId||c.clientId===dashClientId)&&(!dashBrandId||c.brandId===dashBrandId)&&(!srch||((c.name||'')+(brandObjForCamp(c)?.brandName||'')).toLowerCase().includes(srch.toLowerCase())));
   const archivedCount=campaigns.filter(isArchived).length;
   const STEPS=[{k:'brief',n:'1',l:'Brief'},{k:'media',n:'2',l:'Media Plan'},{k:'creative',n:'3',l:'Creative'}];
   const stepper=ed&&html`<div style=${{maxWidth:900,margin:'0 auto',padding:'18px 24px 0',display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
@@ -1026,40 +1054,69 @@ function App(){
       </div>
     </div>`;
 
+  // Global "jump to any campaign" search — kept as an always-available shortcut alongside the
+  // Client→Brand→Campaign hierarchy (Jason's call: hierarchy is the primary path, this is the escape hatch).
+  const globalJump=html`<div style=${{display:'flex',gap:6,alignItems:'center'}}>
+    <select style=${inp({flex:'0 0 210px',fontSize:12,padding:'6px 9px',cursor:'pointer'})} value="" onChange=${e=>{const c=campaigns.find(x=>x.id===e.target.value);if(c)openEdit(c);}}>
+      <option value="">🔎 Jump to any campaign…</option>
+      ${[...campaigns].sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||'')).map(c=>html`<option key=${c.id} value=${c.id}>${isArchived(c)?'📦 ':''}${c.name||'Untitled'} — ${brandObjForCamp(c)?.brandName||'—'}</option>`)}
+    </select>
+  </div>`;
+  const backNav=view==='brands'?{l:'← Clients',fn:goClients}
+    :view==='dash'?{l:'← Brands',fn:()=>goBrandsFor(dashClientId)}
+    :(view==='brief'||view==='media'||view==='creative')?{l:'← Campaigns',fn:goDash}
+    :null;
   const hdr=html`
-    <div style=${{background:C.s1,borderBottom:`1px solid ${C.bd}`,padding:'0 24px',height:54,display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:50}}>
-      <div style=${{display:'flex',alignItems:'center',gap:10}}>
+    <div style=${{background:C.s1,borderBottom:`1px solid ${C.bd}`,padding:'0 24px',height:54,display:'flex',alignItems:'center',justifyContent:'space-between',position:'sticky',top:0,zIndex:50,gap:14}}>
+      <div style=${{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
         <div style=${{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.ac},${C.pu})`,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,color:'#fff',fontSize:14}}>O</div>
         <span style=${{fontSize:15,fontWeight:600,color:C.tx}}>OmniraAI</span>
         <span style=${{fontSize:12,color:C.mt}}>/ Campaign Planner & Builder${view==='brief'?' / Card 1 · Brief':view==='media'?' / Card 2 · Media Plan':view==='creative'?' / Card 3 · Creative':''}</span>
       </div>
-      <div style=${{display:'flex',gap:7,alignItems:'center'}}>
-        ${view==='dash'&&html`<button onClick=${startNew} disabled=${clients.length===0} style=${pbtn(true,{fontSize:12,padding:'5px 16px',opacity:clients.length===0?.4:1})}>+ New Campaign</button>`}
-        ${view!=='dash'&&html`<button onClick=${goDash} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>← Campaigns</button>
-          <button onClick=${saveDraft} disabled=${saving} style=${pbtn(false,{fontSize:12,padding:'6px 14px'})}>${saving?'Saving…':'Save as Draft'}</button>`}
+      <div style=${{flex:1,display:'flex',justifyContent:'center'}}>${globalJump}</div>
+      <div style=${{display:'flex',gap:7,alignItems:'center',flexShrink:0}}>
+        ${view==='dash'&&html`<button onClick=${startNew} disabled=${!dashBrandId} style=${pbtn(true,{fontSize:12,padding:'5px 16px',opacity:!dashBrandId?.4:1})}>+ New Campaign</button>`}
+        ${backNav&&html`<button onClick=${backNav.fn} style=${pbtn(false,{fontSize:12,padding:'5px 12px'})}>${backNav.l}</button>`}
+        ${(view==='brief'||view==='media'||view==='creative')&&html`<button onClick=${saveDraft} disabled=${saving} style=${pbtn(false,{fontSize:12,padding:'6px 14px'})}>${saving?'Saving…':'Save as Draft'}</button>`}
       </div>
+    </div>`;
+  // Breadcrumb: Clients › [Client ▾] › [Brand ▾] — dropdowns double as quick-switchers so you can
+  // jump to a different client/brand from anywhere without walking back through the list screens.
+  const crumb=(view==='brands'||view==='dash'||view==='brief'||view==='media'||view==='creative')&&html`
+    <div style=${{padding:'12px 24px 0',display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',fontSize:12,maxWidth:1100,margin:'0 auto',width:'100%',boxSizing:'border-box'}}>
+      <button onClick=${goClients} style=${{background:'transparent',border:'none',color:C.ac,cursor:'pointer',fontSize:12,fontWeight:500,padding:0}}>🏢 Clients</button>
+      <span style=${{color:C.mt}}>›</span>
+      <select style=${inp({fontSize:12,padding:'3px 7px',width:'auto',flex:'0 0 auto'})} value=${dashClientId} onChange=${e=>goBrandsFor(e.target.value)}>
+        <option value="" disabled>Select client…</option>
+        ${clients.map(c=>html`<option key=${c.id} value=${c.id}>${c.client?.displayName||c.client?.legalName||c.id}</option>`)}
+      </select>
+      ${dashClientId&&html`<${React.Fragment}>
+        <span style=${{color:C.mt}}>›</span>
+        <select style=${inp({fontSize:12,padding:'3px 7px',width:'auto',flex:'0 0 auto'})} value=${dashBrandId} onChange=${e=>goCampaignsFor(dashClientId,e.target.value)}>
+          <option value="" disabled>Select brand…</option>
+          ${(clients.find(c=>c.id===dashClientId)?.brands||[]).map(b=>html`<option key=${b.brandId} value=${b.brandId}>${b.brandName}</option>`)}
+        </select>
+      </${React.Fragment}>`}
+      ${dashBrandId&&ed&&(view==='brief'||view==='media'||view==='creative')&&html`<${React.Fragment}><span style=${{color:C.mt}}>›</span><span style=${{color:C.tx,fontWeight:500}}>${ed.name||'New campaign'}</span></${React.Fragment}>`}
     </div>`;
 
   const dash=html`
-    <div style=${{padding:'24px',maxWidth:1100,margin:'0 auto'}}>
+    <div style=${{padding:'16px 24px 24px',maxWidth:1100,margin:'0 auto'}}>
       ${loading?html`<${Spinner}/>`:html`<div>
+        <div style=${{fontSize:19,fontWeight:600,color:C.tx,marginBottom:14}}>${clients.find(c=>c.id===dashClientId)?.brands?.find(b=>b.brandId===dashBrandId)?.brandName||'Campaigns'}</div>
         <div style=${{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:22}}>
           ${[['Campaigns',campaigns.length,C.tx],['Active',campaigns.filter(c=>c.lifecycle==='active'&&c.status!=='draft').length,C.ok],['Drafts',campaigns.filter(c=>c.status==='draft').length,C.mt],['Brands',brandsFlat.length,C.pu]].map(([l,v,c])=>html`
             <div key=${l} style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:8,padding:'13px 16px'}}><div style=${{fontSize:24,fontWeight:600,color:c}}>${v}</div><div style=${{fontSize:12,color:C.dm,marginTop:3}}>${l}</div></div>`)}
         </div>
         <div style=${{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap',alignItems:'center'}}>
-          <select style=${inp({flex:'0 0 260px',cursor:'pointer'})} value="" onChange=${e=>{const c=campaigns.find(x=>x.id===e.target.value);if(c)openEdit(c);}}>
-            <option value="">↪ Jump to campaign…</option>
-            ${[...campaigns].sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||'')).map(c=>html`<option key=${c.id} value=${c.id}>${isArchived(c)?'📦 ':''}${c.name||'Untitled'} — ${brandObjForCamp(c)?.brandName||'—'}</option>`)}
-          </select>
-          <input style=${inp({flex:1,minWidth:180})} placeholder="Search campaigns…" value=${srch} onChange=${e=>setSrch(e.target.value)}/>
+          <input style=${inp({flex:1,minWidth:180})} placeholder="Search campaigns in this brand…" value=${srch} onChange=${e=>setSrch(e.target.value)}/>
           <div style=${{display:'flex',border:`0.5px solid ${C.bd}`,borderRadius:8,overflow:'hidden',flexShrink:0}}>
             <button onClick=${()=>setShowArchived(false)} style=${{background:!showArchived?C.ac:'transparent',color:!showArchived?'#fff':C.dm,border:'none',padding:'8px 14px',fontSize:12,cursor:'pointer'}}>Active</button>
             <button onClick=${()=>setShowArchived(true)} style=${{background:showArchived?C.ac:'transparent',color:showArchived?'#fff':C.dm,border:'none',padding:'8px 14px',fontSize:12,cursor:'pointer'}}>📦 Archived${archivedCount?` (${archivedCount})`:''}</button>
           </div>
         </div>
         ${clients.length===0?html`<div style=${{textAlign:'center',padding:'50px',color:C.dm}}><div style=${{fontSize:40,marginBottom:12}}>🏢</div><div style=${{fontSize:15,color:C.tx,marginBottom:6}}>No clients/brands yet</div><div style=${{fontSize:13}}>Add a client + brand in App 1 (Brand Brief) first.</div></div>`
-        :filtered.length===0?html`<div style=${{textAlign:'center',padding:'50px',color:C.dm}}><div style=${{fontSize:40,marginBottom:12}}>📋</div><div style=${{fontSize:15,color:C.tx,marginBottom:14}}>No campaigns yet</div><button onClick=${startNew} style=${pbtn(true,{padding:'9px 22px'})}>+ New Campaign Brief</button></div>`
+        :filtered.length===0?html`<div style=${{textAlign:'center',padding:'50px',color:C.dm}}><div style=${{fontSize:40,marginBottom:12}}>📋</div><div style=${{fontSize:15,color:C.tx,marginBottom:14}}>No campaigns yet for this brand</div><button onClick=${startNew} style=${pbtn(true,{padding:'9px 22px'})}>+ New Campaign Brief</button></div>`
         :html`<div style=${{display:'flex',flexDirection:'column',gap:10}}>
           ${filtered.map(c=>{const br=brandObjForCamp(c),od=OBJECTIVES.find(o=>o.k===c.objective);return html`
             <div key=${c.id} onClick=${()=>openEdit(c)} style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:10,padding:'14px 18px',cursor:'pointer',display:'grid',gridTemplateColumns:'1fr auto',gap:10,alignItems:'center'}}
@@ -1084,6 +1141,44 @@ function App(){
                 </div>
               </div>
             </div>`;})}
+        </div>`}
+      </div>`}
+    </div>`;
+
+  // Landing page: pick a client (active clients only) → Brands → Campaigns → Campaign detail.
+  const activeClients=clients.filter(c=>c.status==='active');
+  const campaignCountFor=(cid,bid)=>campaigns.filter(c=>c.clientId===cid&&(!bid||c.brandId===bid)&&!isArchived(c)).length;
+  const clientsView=html`
+    <div style=${{padding:'24px',maxWidth:1100,margin:'0 auto'}}>
+      ${loading?html`<${Spinner}/>`:html`<div>
+        <div style=${{fontSize:19,fontWeight:600,color:C.tx,marginBottom:4}}>Clients</div>
+        <div style=${{fontSize:13,color:C.dm,marginBottom:20}}>Pick a client to see its brands, then its campaigns.</div>
+        ${activeClients.length===0?html`<div style=${{textAlign:'center',padding:'50px',color:C.dm}}><div style=${{fontSize:40,marginBottom:12}}>🏢</div><div style=${{fontSize:15,color:C.tx,marginBottom:6}}>No active clients yet</div><div style=${{fontSize:13}}>Add a client in App 1 (Brand Brief) first.</div></div>`
+        :html`<div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12}}>
+          ${activeClients.map(c=>html`
+            <div key=${c.id} onClick=${()=>goBrandsFor(c.id)} style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:10,padding:'18px 20px',cursor:'pointer'}}
+              onMouseEnter=${e=>e.currentTarget.style.borderColor=C.bdB} onMouseLeave=${e=>e.currentTarget.style.borderColor=C.bd}>
+              <div style=${{fontSize:15,fontWeight:600,color:C.tx,marginBottom:6}}>🏢 ${c.client?.displayName||c.client?.legalName||c.id}</div>
+              <div style=${{fontSize:12,color:C.dm}}>${(c.brands||[]).length} brand${(c.brands||[]).length===1?'':'s'} · ${campaignCountFor(c.id)} active campaign${campaignCountFor(c.id)===1?'':'s'}</div>
+              ${c.code&&html`<div style=${{fontSize:10,color:C.mt,marginTop:6,fontFamily:'monospace'}}>${c.code}</div>`}
+            </div>`)}
+        </div>`}
+      </div>`}
+    </div>`;
+
+  const brandsView=html`
+    <div style=${{padding:'16px 24px 24px',maxWidth:1100,margin:'0 auto'}}>
+      ${loading?html`<${Spinner}/>`:html`<div>
+        <div style=${{fontSize:19,fontWeight:600,color:C.tx,marginBottom:4}}>${clients.find(c=>c.id===dashClientId)?.client?.displayName||'Brands'}</div>
+        <div style=${{fontSize:13,color:C.dm,marginBottom:20}}>Pick a brand to see its campaigns.</div>
+        ${(clients.find(c=>c.id===dashClientId)?.brands||[]).length===0?html`<div style=${{textAlign:'center',padding:'50px',color:C.dm}}><div style=${{fontSize:40,marginBottom:12}}>🏷️</div><div style=${{fontSize:15,color:C.tx,marginBottom:6}}>No brands yet for this client</div><div style=${{fontSize:13}}>Add a brand in App 1 (Brand Brief) first.</div></div>`
+        :html`<div style=${{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))',gap:12}}>
+          ${(clients.find(c=>c.id===dashClientId)?.brands||[]).map(b=>html`
+            <div key=${b.brandId} onClick=${()=>goCampaignsFor(dashClientId,b.brandId)} style=${{background:C.s1,border:`0.5px solid ${C.bd}`,borderRadius:10,padding:'18px 20px',cursor:'pointer'}}
+              onMouseEnter=${e=>e.currentTarget.style.borderColor=C.bdB} onMouseLeave=${e=>e.currentTarget.style.borderColor=C.bd}>
+              <div style=${{fontSize:15,fontWeight:600,color:C.tx,marginBottom:6}}>🏷️ ${b.brandName}</div>
+              <div style=${{fontSize:12,color:C.dm}}>${campaignCountFor(dashClientId,b.brandId)} active campaign${campaignCountFor(dashClientId,b.brandId)===1?'':'s'}${b.industry?' · '+b.industry:''}</div>
+            </div>`)}
         </div>`}
       </div>`}
     </div>`;
@@ -1464,6 +1559,17 @@ function App(){
                 </div>`;})}
               </div>`}
             </div>
+            `:isVideoFmt(t.format,t.channel)?html`
+            <div style=${{marginBottom:10}}><${Lb}>Video direction / script (uploaded video is final — not AI-generated)</${Lb}><textarea style=${inp({resize:'vertical',minHeight:100,lineHeight:1.55})} value=${cr.visualPrompt||''} onChange=${e=>updTpCreative(t.id,'visualPrompt',e.target.value)} placeholder="Shot direction, script beats, what the clip should show…"/></div>
+            <div style=${{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-start',background:C.s2,border:`0.5px solid ${C.bd}`,borderRadius:10,padding:12}}>
+              ${cr.imageUrl?html`<video src=${cr.imageUrl} controls style=${{width:180,maxHeight:200,borderRadius:8,border:`0.5px solid ${C.bd}`,flex:'0 0 auto',background:'#000'}}/>`:html`<div style=${{width:116,height:116,borderRadius:8,border:`1px dashed ${C.bd}`,display:'flex',alignItems:'center',justifyContent:'center',color:C.mt,fontSize:10,textAlign:'center',flex:'0 0 auto'}}>no video yet</div>`}
+              <div style=${{flex:1,minWidth:240}}>
+                <div style=${{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                  <label style=${{display:'inline-flex',alignItems:'center',gap:5,fontSize:11,fontWeight:500,color:C.tx,background:C.s3,border:`0.5px solid ${C.bd}`,borderRadius:7,padding:'6px 11px',cursor:tpImgBusy===t.id?'default':'pointer',opacity:tpImgBusy===t.id?.5:1}}>${tpImgBusy===t.id?'Uploading…':cr.imageUrl?'⬆ Replace video':'⬆ Upload video'}<input type="file" accept="video/*" disabled=${tpImgBusy===t.id} onChange=${e=>{const f=e.target.files&&e.target.files[0];e.target.value='';uploadTpVideo(t.id,f);}} style=${{display:'none'}}/></label>
+                </div>
+                <div style=${{fontSize:10.5,color:C.mt,marginTop:8,lineHeight:1.5}}>📐 Vertical 9:16, 1080×1920, mp4/H.264, under 90s. Uploads straight to the CDN — see <b>VIDEO_CONTENT_GUIDE.md</b> for the full spec.</div>
+              </div>
+            </div>
             `:html`
             <div style=${{marginBottom:10}}><${Lb}>Visual prompt (obeys concept's visual direction)</${Lb}><textarea style=${inp({resize:'vertical',minHeight:120,lineHeight:1.55})} value=${cr.visualPrompt||''} onChange=${e=>updTpCreative(t.id,'visualPrompt',e.target.value)} placeholder="Art direction for this touchpoint…"/></div>
             <div style=${{display:'flex',gap:12,flexWrap:'wrap',alignItems:'flex-start',background:C.s2,border:`0.5px solid ${C.bd}`,borderRadius:10,padding:12}}>
@@ -1513,8 +1619,9 @@ function App(){
   return html`
     <div style=${{minHeight:'100vh',background:C.bg,color:C.tx}}>
       ${hdr}
-      ${view!=='dash'&&stepper}
-      <div style=${{paddingBottom:48}}>${view==='dash'&&dash}${view==='brief'&&brief}${view==='media'&&mediaView}${view==='creative'&&creativeView}</div>
+      ${crumb}
+      ${(view==='brief'||view==='media'||view==='creative')&&stepper}
+      <div style=${{paddingBottom:48}}>${view==='clients'&&clientsView}${view==='brands'&&brandsView}${view==='dash'&&dash}${view==='brief'&&brief}${view==='media'&&mediaView}${view==='creative'&&creativeView}</div>
       ${toast&&html`<div style=${{position:'fixed',bottom:24,right:24,background:C.s1,border:`1px solid ${toastType==='ok'?C.ok:C.er}60`,borderRadius:8,padding:'10px 18px',fontSize:13,color:C.tx,zIndex:999}}>${toast}</div>`}
     </div>`;
 }
